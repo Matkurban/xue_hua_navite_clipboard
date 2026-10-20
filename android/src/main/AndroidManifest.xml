@@ -1,3 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
   package="com.kurban.xue_hua_navite_clipboard">
+
+  <application>
+    <provider
+      android:name="com.kurban.xue_hua_navite_clipboard.XueHuaClipboardContentProvider"
+      android:authorities="${applicationId}.xue_hua_clipboard.provider"
+      android:exported="false"
+      android:grantUriPermissions="true" />
+  </application>
 </manifest>
