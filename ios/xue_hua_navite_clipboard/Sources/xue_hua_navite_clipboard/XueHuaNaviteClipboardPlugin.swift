@@ -344,35 +344,40 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     let hasFiles = lowerTypes.contains(Self.utiFileUrl)
     let hasColor = pb.hasColors
 
-    if shouldDetectPatterns, #available(iOS 14.0, *) {
-      var patternsToCheck: Set<UIPasteboard.DetectionPattern> = [
-        .probableWebURL,
-        .probableWebSearch,
-        .number
+    if shouldDetectPatterns {
+      let probableWebURL: PartialKeyPath<UIPasteboard.DetectedValues> = \.probableWebURL
+      let probableWebSearch: PartialKeyPath<UIPasteboard.DetectedValues> = \.probableWebSearch
+      let number: PartialKeyPath<UIPasteboard.DetectedValues> = \.number
+      let emailAddresses: PartialKeyPath<UIPasteboard.DetectedValues> = \.emailAddresses
+      let phoneNumbers: PartialKeyPath<UIPasteboard.DetectedValues> = \.phoneNumbers
+      let postalAddresses: PartialKeyPath<UIPasteboard.DetectedValues> = \.postalAddresses
+      let flightNumbers: PartialKeyPath<UIPasteboard.DetectedValues> = \.flightNumbers
+      let shipmentTrackingNumbers: PartialKeyPath<UIPasteboard.DetectedValues> = \.shipmentTrackingNumbers
+      let moneyAmounts: PartialKeyPath<UIPasteboard.DetectedValues> = \.moneyAmounts
+      let patternsToCheck: Set<PartialKeyPath<UIPasteboard.DetectedValues>> = [
+        probableWebURL,
+        probableWebSearch,
+        number,
+        emailAddresses,
+        phoneNumbers,
+        postalAddresses,
+        flightNumbers,
+        shipmentTrackingNumbers,
+        moneyAmounts
       ]
-      if #available(iOS 15.0, *) {
-        patternsToCheck.insert(.emailAddress)
-        patternsToCheck.insert(.phoneNumber)
-        patternsToCheck.insert(.postalAddress)
-        patternsToCheck.insert(.flightNumber)
-        patternsToCheck.insert(.shipmentTrackingNumber)
-        patternsToCheck.insert(.moneyAmount)
-      }
 
       pb.detectPatterns(for: patternsToCheck) { [weak pb] detectResult in
         var detected: [String] = []
         if case .success(let found) = detectResult {
-          if found.contains(.probableWebURL) { detected.append("probableWebUrl") }
-          if found.contains(.probableWebSearch) { detected.append("probableWebSearch") }
-          if found.contains(.number) { detected.append("number") }
-          if #available(iOS 15.0, *) {
-            if found.contains(.emailAddress) { detected.append("emailAddress") }
-            if found.contains(.phoneNumber) { detected.append("phoneNumber") }
-            if found.contains(.postalAddress) { detected.append("postalAddress") }
-            if found.contains(.flightNumber) { detected.append("flightNumber") }
-            if found.contains(.shipmentTrackingNumber) { detected.append("shipmentTrackingNumber") }
-            if found.contains(.moneyAmount) { detected.append("moneyAmount") }
-          }
+          if found.contains(probableWebURL) { detected.append("probableWebUrl") }
+          if found.contains(probableWebSearch) { detected.append("probableWebSearch") }
+          if found.contains(number) { detected.append("number") }
+          if found.contains(emailAddresses) { detected.append("emailAddress") }
+          if found.contains(phoneNumbers) { detected.append("phoneNumber") }
+          if found.contains(postalAddresses) { detected.append("postalAddress") }
+          if found.contains(flightNumbers) { detected.append("flightNumber") }
+          if found.contains(shipmentTrackingNumbers) { detected.append("shipmentTrackingNumber") }
+          if found.contains(moneyAmounts) { detected.append("moneyAmount") }
         }
         DispatchQueue.main.async {
           result([

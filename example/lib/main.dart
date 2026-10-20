@@ -65,10 +65,7 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _refreshClipboardInspection() async {
     try {
-      final meta = await _clipboard.getMetadata(
-        buffer: _selectedBuffer,
-        detectPatterns: true,
-      );
+      final meta = await _clipboard.getMetadata(buffer: _selectedBuffer, detectPatterns: true);
       final item = await _clipboard.readItem(
         options: ClipboardReadOptions(
           buffer: _selectedBuffer,
@@ -97,18 +94,11 @@ class _MyAppState extends State<MyApp> {
     final canvas = Canvas(recorder);
     const size = Size(240, 100);
     final paint = Paint()..color = const Color(0xFF1E88E5);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(12)),
-      paint,
-    );
+    canvas.drawRRect(RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(12)), paint);
     final textPainter = TextPainter(
       text: const TextSpan(
         text: 'XueHua PNG Clip',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-        ),
+        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -124,10 +114,7 @@ class _MyAppState extends State<MyApp> {
     final isMonitoring = _clipboardSub != null;
     return MaterialApp(
       title: 'XueHua Native Clipboard Demo',
-      theme: ThemeData(
-        colorSchemeSeed: Colors.indigo,
-        useMaterial3: true,
-      ),
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
       home: Scaffold(
         appBar: AppBar(
           title: const Text('Native Clipboard Inspector'),
@@ -160,14 +147,16 @@ class _MyAppState extends State<MyApp> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: <Widget>[
-                        const Text(
-                          'On-Demand Change Listener (onClipboardChanged)',
-                          style: TextStyle(fontWeight: FontWeight.bold),
+                        Flexible(
+                          child: const Text(
+                            'On-Demand Change Listener (onClipboardChanged)',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                         ),
-                        Switch(
-                          value: isMonitoring,
-                          onChanged: _toggleMonitoring,
-                        ),
+                        Switch(value: isMonitoring, onChanged: _toggleMonitoring),
                       ],
                     ),
                     Text('Status: $_statusLog'),
@@ -221,8 +210,7 @@ class _MyAppState extends State<MyApp> {
                       buffer: _selectedBuffer,
                     );
                     setState(() {
-                      _statusLog =
-                          'Wrote sensitive text (concealed/no-history, expires in 30s)';
+                      _statusLog = 'Wrote sensitive text (concealed/no-history, expires in 30s)';
                     });
                     await _refreshClipboardInspection();
                   },
@@ -272,9 +260,7 @@ class _MyAppState extends State<MyApp> {
                 ),
                 FilledButton.tonal(
                   onPressed: () async {
-                    final data = Uint8List.fromList(
-                      utf8.encode('{"customPayload":42}'),
-                    );
+                    final data = Uint8List.fromList(utf8.encode('{"customPayload":42}'));
                     await _clipboard.writeCustomData(
                       'application/x-xuehua-custom',
                       data,
@@ -330,14 +316,10 @@ class _MyAppState extends State<MyApp> {
                       const SizedBox(height: 8),
                       if (_currentItem!.plainText != null)
                         Text('PlainText: ${_currentItem!.plainText}'),
-                      if (_currentItem!.html != null)
-                        Text('HTML: ${_currentItem!.html}'),
-                      if (_currentItem!.rtfString != null)
-                        Text('RTF: ${_currentItem!.rtfString}'),
-                      if (_currentItem!.uri != null)
-                        Text('URI: ${_currentItem!.uri}'),
-                      if (_currentItem!.files != null &&
-                          _currentItem!.files!.isNotEmpty)
+                      if (_currentItem!.html != null) Text('HTML: ${_currentItem!.html}'),
+                      if (_currentItem!.rtfString != null) Text('RTF: ${_currentItem!.rtfString}'),
+                      if (_currentItem!.uri != null) Text('URI: ${_currentItem!.uri}'),
+                      if (_currentItem!.files != null && _currentItem!.files!.isNotEmpty)
                         Text(
                           'Files (${_currentItem!.fileCopyMode.wireName}): ${_currentItem!.files!.join(', ')}',
                         ),
@@ -354,9 +336,7 @@ class _MyAppState extends State<MyApp> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text(
-                              '#${_currentItem!.colorValue!.toRadixString(16).toUpperCase()}',
-                            ),
+                            Text('#${_currentItem!.colorValue!.toRadixString(16).toUpperCase()}'),
                           ],
                         ),
                       if (_currentItem!.customFormats.isNotEmpty)
@@ -367,11 +347,7 @@ class _MyAppState extends State<MyApp> {
                         const SizedBox(height: 8),
                         const Text('Image Preview (PNG):'),
                         const SizedBox(height: 4),
-                        Image.memory(
-                          _currentItem!.imageBytes!,
-                          height: 100,
-                          fit: BoxFit.contain,
-                        ),
+                        Image.memory(_currentItem!.imageBytes!, height: 100, fit: BoxFit.contain),
                       ],
                     ],
                   ),
