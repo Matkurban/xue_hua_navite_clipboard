@@ -1,8 +1,8 @@
 name: xue_hua_navite_clipboard
 description: "Cross-platform full-featured native clipboard plugin for Flutter (Android, iOS, macOS, Windows, Linux, Web)."
 version: 1.0.0
-homepage: https://github.com/kurban/xue_hua_navite_clipboard
-repository: https://github.com/kurban/xue_hua_navite_clipboard
+homepage: https://github.com/Matkurban
+repository: https://github.com/Matkurban/xue_hua_navite_clipboard
 topics:
   - clipboard
   - paste
