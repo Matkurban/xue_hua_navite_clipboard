@@ -93,9 +93,7 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     String? targetFormat,
   }) async {
     try {
-      final args = <String, dynamic>{
-        'options': options.toMap(),
-      };
+      final args = <String, dynamic>{'options': options.toMap()};
       if (targetFormat != null) {
         args['targetFormat'] = targetFormat;
       }
@@ -161,9 +159,7 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     String? customBufferName,
   }) async {
     try {
-      final args = <String, dynamic>{
-        'buffer': buffer.wireName,
-      };
+      final args = <String, dynamic>{'buffer': buffer.wireName};
       if (customBufferName != null) {
         args['customBufferName'] = customBufferName;
       }
@@ -185,16 +181,11 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     _expirationTimer?.cancel();
     _expirationTimer = null;
     try {
-      final args = <String, dynamic>{
-        'buffer': buffer.wireName,
-      };
+      final args = <String, dynamic>{'buffer': buffer.wireName};
       if (customBufferName != null) {
         args['customBufferName'] = customBufferName;
       }
-      final cleared = await methodChannel.invokeMethod<bool>(
-        'clear',
-        args,
-      );
+      final cleared = await methodChannel.invokeMethod<bool>('clear', args);
       return cleared ?? false;
     } on PlatformException catch (e) {
       throw _mapPlatformException(e);

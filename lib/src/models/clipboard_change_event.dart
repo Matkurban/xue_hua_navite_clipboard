@@ -17,15 +17,14 @@ class ClipboardChangeEvent {
     required this.timestampMs,
   });
 
-  DateTime get timestamp =>
-      DateTime.fromMillisecondsSinceEpoch(timestampMs);
+  DateTime get timestamp => DateTime.fromMillisecondsSinceEpoch(timestampMs);
 
   factory ClipboardChangeEvent.fromMap(Map<Object?, Object?> map) {
     return ClipboardChangeEvent(
       buffer: ClipboardBuffer.fromWireName(map['buffer'] as String?),
       changeCount: (map['changeCount'] as int?) ?? 0,
-      timestampMs: (map['timestampMs'] as int?) ??
-          DateTime.now().millisecondsSinceEpoch,
+      timestampMs:
+          (map['timestampMs'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
     );
   }
 

@@ -86,10 +86,7 @@ class XueHuaNaviteClipboard {
   }) {
     final fallback = plainTextFallback ?? stripHtmlTags(html);
     return writeItem(
-      ClipboardDataItem(
-        html: html,
-        plainText: fallback,
-      ),
+      ClipboardDataItem(html: html, plainText: fallback),
       options: options,
     );
   }
@@ -101,10 +98,7 @@ class XueHuaNaviteClipboard {
     ClipboardWriteOptions options = const ClipboardWriteOptions(),
   }) {
     return writeItem(
-      ClipboardDataItem(
-        rtfBytes: rtfBytes,
-        plainText: plainTextFallback,
-      ),
+      ClipboardDataItem(rtfBytes: rtfBytes, plainText: plainTextFallback),
       options: options,
     );
   }
@@ -159,10 +153,7 @@ class XueHuaNaviteClipboard {
     ClipboardWriteOptions options = const ClipboardWriteOptions(),
   }) {
     return writeItem(
-      ClipboardDataItem(
-        imageBytes: imageBytes,
-        imageMimeType: mimeType,
-      ),
+      ClipboardDataItem(imageBytes: imageBytes, imageMimeType: mimeType),
       options: options,
     );
   }
@@ -174,10 +165,7 @@ class XueHuaNaviteClipboard {
     ClipboardWriteOptions options = const ClipboardWriteOptions(),
   }) {
     return writeItem(
-      ClipboardDataItem(
-        files: filePaths,
-        fileCopyMode: mode,
-      ),
+      ClipboardDataItem(files: filePaths, fileCopyMode: mode),
       options: options,
     );
   }

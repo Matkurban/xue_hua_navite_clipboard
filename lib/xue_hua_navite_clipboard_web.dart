@@ -145,10 +145,7 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
       }
 
       return <ClipboardDataItem>[
-        ClipboardDataItem(
-          plainText: str,
-          uri: parsedUri,
-        ),
+        ClipboardDataItem(plainText: str, uri: parsedUri),
       ];
     } catch (e) {
       throw ClipboardPermissionException(

@@ -21,8 +21,6 @@ class ClipboardException implements Exception {
 
 /// 剪切板权限被拒绝异常（如 Web 端非安全上下文/未授权，或 iOS 16+ 用户拒绝粘贴弹窗）
 class ClipboardPermissionException extends ClipboardException {
-  const ClipboardPermissionException({
-    required super.message,
-    super.details,
-  }) : super(code: 'PERMISSION_DENIED');
+  const ClipboardPermissionException({required super.message, super.details})
+    : super(code: 'PERMISSION_DENIED');
 }

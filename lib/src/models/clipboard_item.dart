@@ -70,9 +70,7 @@ class ClipboardDataItem {
 
   /// 转换为平台通道传输 Map
   Map<String, dynamic> toMap() {
-    final map = <String, dynamic>{
-      'fileCopyMode': fileCopyMode.wireName,
-    };
+    final map = <String, dynamic>{'fileCopyMode': fileCopyMode.wireName};
     if (plainText != null) {
       map['plainText'] = plainText;
     }
