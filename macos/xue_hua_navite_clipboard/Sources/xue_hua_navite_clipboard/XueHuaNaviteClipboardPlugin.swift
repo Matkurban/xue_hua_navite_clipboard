@@ -102,8 +102,6 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any]
     switch call.method {
-    case "getPlatformVersion":
-      result("macOS " + ProcessInfo.processInfo.operatingSystemVersionString)
     case "writeItems":
       result(handleWriteItems(args: args))
     case "readItems":
@@ -153,7 +151,6 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     var pasteboardObjects: [NSPasteboardWriting] = []
 
     for item in rawItems {
-      // Handle multiple files natively if present
       if let files = item["files"] as? [String], !files.isEmpty {
         for filePath in files {
           let fileUrl = NSURL(fileURLWithPath: filePath)
@@ -251,7 +248,6 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
       return []
     }
 
-    // Read all file URLs from the pasteboard
     var allFilePaths: [String] = []
     if let fileUrls = pb.readObjects(
       forClasses: [NSURL.self],

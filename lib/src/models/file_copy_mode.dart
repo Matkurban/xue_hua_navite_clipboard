@@ -10,7 +10,9 @@ enum FileCopyMode {
   const FileCopyMode(this.wireName);
 
   static FileCopyMode fromWireName(String? name) {
-    if (name == 'cut') return FileCopyMode.cut;
+    if (name == 'cut') {
+      return FileCopyMode.cut;
+    }
     return FileCopyMode.copy;
   }
 }

@@ -55,13 +55,21 @@ enum StandardClipboardFormat {
   const StandardClipboardFormat(this.mimeType);
 
   static StandardClipboardFormat? fromMimeType(String? mime) {
-    if (mime == null) return null;
+    if (mime == null) {
+      return null;
+    }
     final normalized = mime.toLowerCase().trim();
     for (final fmt in StandardClipboardFormat.values) {
-      if (fmt.mimeType == normalized) return fmt;
+      if (fmt.mimeType == normalized) {
+        return fmt;
+      }
     }
-    if (normalized == 'application/rtf') return StandardClipboardFormat.rtf;
-    if (normalized == 'image/jpg') return StandardClipboardFormat.jpeg;
+    if (normalized == 'application/rtf') {
+      return StandardClipboardFormat.rtf;
+    }
+    if (normalized == 'image/jpg') {
+      return StandardClipboardFormat.jpeg;
+    }
     return null;
   }
 }

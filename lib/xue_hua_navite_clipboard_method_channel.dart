@@ -41,18 +41,6 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
   }
 
   @override
-  Future<String?> getPlatformVersion() async {
-    try {
-      final version = await methodChannel.invokeMethod<String>(
-        'getPlatformVersion',
-      );
-      return version;
-    } on PlatformException catch (e) {
-      throw _mapPlatformException(e);
-    }
-  }
-
-  @override
   Future<bool> writeItems(
     List<ClipboardDataItem> items, {
     ClipboardWriteOptions options = const ClipboardWriteOptions(),
@@ -105,14 +93,19 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     String? targetFormat,
   }) async {
     try {
+      final args = <String, dynamic>{
+        'options': options.toMap(),
+      };
+      if (targetFormat != null) {
+        args['targetFormat'] = targetFormat;
+      }
       final rawList = await methodChannel.invokeMethod<List<Object?>>(
         'readItems',
-        <String, dynamic>{
-          'options': options.toMap(),
-          if (targetFormat != null) 'targetFormat': targetFormat,
-        },
+        args,
       );
-      if (rawList == null) return const <ClipboardDataItem>[];
+      if (rawList == null) {
+        return const <ClipboardDataItem>[];
+      }
       return rawList
           .whereType<Map<Object?, Object?>>()
           .map(ClipboardDataItem.fromMap)
@@ -130,13 +123,16 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     bool detectPatterns = false,
   }) async {
     try {
+      final args = <String, dynamic>{
+        'buffer': buffer.wireName,
+        'detectPatterns': detectPatterns,
+      };
+      if (customBufferName != null) {
+        args['customBufferName'] = customBufferName;
+      }
       final rawMap = await methodChannel.invokeMethod<Map<Object?, Object?>>(
         'getMetadata',
-        <String, dynamic>{
-          'buffer': buffer.wireName,
-          if (customBufferName != null) 'customBufferName': customBufferName,
-          'detectPatterns': detectPatterns,
-        },
+        args,
       );
       if (rawMap == null) {
         return const ClipboardMetadata(
@@ -165,12 +161,15 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     String? customBufferName,
   }) async {
     try {
+      final args = <String, dynamic>{
+        'buffer': buffer.wireName,
+      };
+      if (customBufferName != null) {
+        args['customBufferName'] = customBufferName;
+      }
       final count = await methodChannel.invokeMethod<int>(
         'getChangeCount',
-        <String, dynamic>{
-          'buffer': buffer.wireName,
-          if (customBufferName != null) 'customBufferName': customBufferName,
-        },
+        args,
       );
       return count ?? 0;
     } on PlatformException catch (e) {
@@ -186,12 +185,15 @@ class MethodChannelXueHuaNaviteClipboard extends XueHuaNaviteClipboardPlatform {
     _expirationTimer?.cancel();
     _expirationTimer = null;
     try {
+      final args = <String, dynamic>{
+        'buffer': buffer.wireName,
+      };
+      if (customBufferName != null) {
+        args['customBufferName'] = customBufferName;
+      }
       final cleared = await methodChannel.invokeMethod<bool>(
         'clear',
-        <String, dynamic>{
-          'buffer': buffer.wireName,
-          if (customBufferName != null) 'customBufferName': customBufferName,
-        },
+        args,
       );
       return cleared ?? false;
     } on PlatformException catch (e) {

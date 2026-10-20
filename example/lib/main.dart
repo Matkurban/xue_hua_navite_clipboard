@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
 
 void main() {
@@ -20,7 +20,6 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   final XueHuaNaviteClipboard _clipboard = XueHuaNaviteClipboard.instance;
 
-  String _platformVersion = 'Unknown';
   ClipboardBuffer _selectedBuffer = ClipboardBuffer.general;
   ClipboardMetadata? _metadata;
   ClipboardDataItem? _currentItem;
@@ -32,7 +31,7 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    _initPlatformState();
+    _refreshClipboardInspection();
   }
 
   @override
@@ -41,27 +40,13 @@ class _MyAppState extends State<MyApp> {
     super.dispose();
   }
 
-  Future<void> _initPlatformState() async {
-    String platformVersion;
-    try {
-      platformVersion =
-          await _clipboard.getPlatformVersion() ?? 'Unknown platform version';
-    } on Exception catch (e) {
-      platformVersion = 'Failed to get platform version: $e';
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _platformVersion = platformVersion;
-    });
-    await _refreshClipboardInspection();
-  }
-
   void _toggleMonitoring(bool enable) {
     setState(() {
       if (enable) {
         _clipboardSub ??= _clipboard.onClipboardChanged.listen((event) {
-          if (!mounted) return;
+          if (!mounted) {
+            return;
+          }
           setState(() {
             _receivedEventsCount++;
             _statusLog =
@@ -90,13 +75,17 @@ class _MyAppState extends State<MyApp> {
           requestedCustomFormats: const <String>['application/x-xuehua-custom'],
         ),
       );
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _metadata = meta;
         _currentItem = item;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _statusLog = 'Inspection error: $e';
       });
@@ -141,7 +130,7 @@ class _MyAppState extends State<MyApp> {
       ),
       home: Scaffold(
         appBar: AppBar(
-          title: Text('Native Clipboard ($_platformVersion)'),
+          title: const Text('Native Clipboard Inspector'),
           actions: <Widget>[
             IconButton(
               icon: const Icon(Icons.refresh),

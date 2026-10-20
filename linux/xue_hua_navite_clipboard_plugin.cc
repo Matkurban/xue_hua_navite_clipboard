@@ -3,7 +3,6 @@
 #include <flutter_linux/flutter_linux.h>
 #include <gtk/gtk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <sys/utsname.h>
 
 #include <cstring>
 #include <map>
@@ -318,7 +317,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
   GtkClipboard* cb = resolve_gtk_clipboard(buffer_name);
   g_autoptr(FlValue) item = fl_value_new_map();
 
-  // 1. Plain text
   g_autofree gchar* text = gtk_clipboard_wait_for_text(cb);
   if (text) {
     fl_value_set_string_take(item, "plainText", fl_value_new_string(text));
@@ -340,7 +338,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
     return success;
   };
 
-  // 2. HTML
   std::vector<uint8_t> html_bytes;
   if (read_target_bytes("text/html", html_bytes)) {
     std::string html_str(reinterpret_cast<const char*>(html_bytes.data()),
@@ -349,7 +346,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
                              fl_value_new_string(html_str.c_str()));
   }
 
-  // 3. RTF
   std::vector<uint8_t> rtf_bytes;
   if (read_target_bytes("text/rtf", rtf_bytes) ||
       read_target_bytes("application/rtf", rtf_bytes)) {
@@ -358,7 +354,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
         fl_value_new_uint8_list(rtf_bytes.data(), rtf_bytes.size()));
   }
 
-  // 4. Markdown
   std::vector<uint8_t> md_bytes;
   if (read_target_bytes("text/markdown", md_bytes)) {
     std::string md_str(reinterpret_cast<const char*>(md_bytes.data()),
@@ -367,7 +362,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
                              fl_value_new_string(md_str.c_str()));
   }
 
-  // 5. Image (PNG or GdkPixbuf conversion)
   std::vector<uint8_t> png_bytes;
   if (read_target_bytes("image/png", png_bytes)) {
     fl_value_set_string_take(
@@ -394,7 +388,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
     }
   }
 
-  // 6. Files & URI
   std::vector<uint8_t> gnome_bytes;
   std::string file_copy_mode = "copy";
   g_autoptr(FlValue) files_list = fl_value_new_list();
@@ -445,7 +438,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
                              fl_value_new_string(file_copy_mode.c_str()));
   }
 
-  // 7. Color
   std::vector<uint8_t> color_bytes;
   if (read_target_bytes("application/x-color", color_bytes) &&
       color_bytes.size() >= sizeof(int64_t)) {
@@ -454,7 +446,6 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
     fl_value_set_string_take(item, "colorValue", fl_value_new_int(c));
   }
 
-  // 8. Custom Formats
   if (requested_custom &&
       fl_value_get_type(requested_custom) == FL_VALUE_TYPE_LIST) {
     g_autoptr(FlValue) custom_map = fl_value_new_map();
@@ -554,9 +545,7 @@ static void xue_hua_navite_clipboard_plugin_handle_method_call(
   const gchar* method = fl_method_call_get_name(method_call);
   FlValue* args = fl_method_call_get_args(method_call);
 
-  if (strcmp(method, "getPlatformVersion") == 0) {
-    response = get_platform_version();
-  } else if (strcmp(method, "writeItems") == 0) {
+  if (strcmp(method, "writeItems") == 0) {
     response = handle_write_items(self, args);
   } else if (strcmp(method, "readItems") == 0) {
     response = handle_read_items(self, args);
@@ -594,14 +583,6 @@ static void xue_hua_navite_clipboard_plugin_handle_method_call(
   }
 
   fl_method_call_respond(method_call, response, nullptr);
-}
-
-FlMethodResponse* get_platform_version() {
-  struct utsname uname_data = {};
-  uname(&uname_data);
-  g_autofree gchar *version = g_strdup_printf("Linux %s", uname_data.version);
-  g_autoptr(FlValue) result = fl_value_new_string(version);
-  return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
 }
 
 static void xue_hua_navite_clipboard_plugin_dispose(GObject* object) {

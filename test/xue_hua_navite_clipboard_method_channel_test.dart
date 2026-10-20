@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
@@ -25,8 +23,6 @@ void main() {
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
           lastMethodCall = methodCall;
           switch (methodCall.method) {
-            case 'getPlatformVersion':
-              return '42';
             case 'writeItems':
               return true;
             case 'readItems':
@@ -54,7 +50,11 @@ void main() {
                 'hasImage': true,
                 'hasFiles': true,
                 'hasColor': true,
-                'rawPlatformFormats': <String>['text/plain', 'text/html', 'image/png'],
+                'rawPlatformFormats': <String>[
+                  'text/plain',
+                  'text/html',
+                  'image/png',
+                ],
                 'detectedPatterns': <String>['probableWebUrl'],
               };
             case 'getChangeCount':
@@ -86,10 +86,6 @@ void main() {
         .setMockMethodCallHandler(channel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(eventMethodChannel, null);
-  });
-
-  test('getPlatformVersion', () async {
-    expect(await platform.getPlatformVersion(), '42');
   });
 
   test('writeItems serializes items and options properly', () async {
@@ -134,16 +130,13 @@ void main() {
   });
 
   test('EventChannel does not listen until subscribed and cancels when unsubscribed', () async {
-    // Accessing the stream property alone does not start native listening
     final stream = platform.onClipboardChanged;
     expect(nativeEventStreamListening, isFalse);
 
-    // Subscribing triggers EventChannel 'listen' on native side
     final sub = stream.listen((_) {});
     await Future<void>.delayed(Duration.zero);
     expect(nativeEventStreamListening, isTrue);
 
-    // Cancelling triggers EventChannel 'cancel' on native side
     await sub.cancel();
     await Future<void>.delayed(Duration.zero);
     expect(nativeEventStreamListening, isFalse);

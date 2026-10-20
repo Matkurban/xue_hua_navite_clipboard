@@ -6,7 +6,6 @@
 #include <shlwapi.h>
 #include <objidl.h>
 #include <gdiplus.h>
-#include <VersionHelpers.h>
 
 #include <flutter/event_channel.h>
 #include <flutter/event_stream_handler_functions.h>
@@ -19,7 +18,6 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -338,20 +336,6 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   const std::string& method = method_call.method_name();
 
-  if (method == "getPlatformVersion") {
-    std::ostringstream version_stream;
-    version_stream << "Windows ";
-    if (IsWindows10OrGreater()) {
-      version_stream << "10+";
-    } else if (IsWindows8OrGreater()) {
-      version_stream << "8";
-    } else if (IsWindows7OrGreater()) {
-      version_stream << "7";
-    }
-    result->Success(flutter::EncodableValue(version_stream.str()));
-    return;
-  }
-
   if (method == "getChangeCount") {
     DWORD seq = GetClipboardSequenceNumber();
     result->Success(flutter::EncodableValue(static_cast<int64_t>(seq)));
@@ -634,7 +618,6 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
         const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
         size_t sz = GlobalSize(hdata);
         if (ptr && sz > 0) {
-          // Strip trailing null byte if present
           while (sz > 0 && ptr[sz - 1] == 0) --sz;
           std::vector<uint8_t> rtf_vec(ptr, ptr + sz);
           item[flutter::EncodableValue("rtfBytes")] =

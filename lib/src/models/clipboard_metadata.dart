@@ -15,7 +15,9 @@ enum ClipboardDetectedPattern {
 
   static ClipboardDetectedPattern? fromWireName(String? name) {
     for (final value in ClipboardDetectedPattern.values) {
-      if (value.wireName == name) return value;
+      if (value.wireName == name) {
+        return value;
+      }
     }
     return null;
   }
@@ -76,7 +78,9 @@ class ClipboardMetadata {
       for (final item in rawPatterns) {
         if (item is String) {
           final parsed = ClipboardDetectedPattern.fromWireName(item);
-          if (parsed != null) patterns.add(parsed);
+          if (parsed != null) {
+            patterns.add(parsed);
+          }
         }
       }
     }
@@ -99,9 +103,8 @@ class ClipboardMetadata {
   }
 
   Map<String, dynamic> toMap() {
-    return <String, dynamic>{
+    final map = <String, dynamic>{
       'changeCount': changeCount,
-      if (timestampMs != null) 'timestampMs': timestampMs,
       'itemCount': itemCount,
       'hasPlainText': hasPlainText,
       'hasHtml': hasHtml,
@@ -114,5 +117,9 @@ class ClipboardMetadata {
       'rawPlatformFormats': rawPlatformFormats,
       'detectedPatterns': detectedPatterns.map((e) => e.wireName).toList(),
     };
+    if (timestampMs != null) {
+      map['timestampMs'] = timestampMs;
+    }
+    return map;
   }
 }

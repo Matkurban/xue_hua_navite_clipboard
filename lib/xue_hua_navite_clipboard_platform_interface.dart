@@ -30,11 +30,6 @@ abstract class XueHuaNaviteClipboardPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  /// 获取平台系统版本信息
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('getPlatformVersion() has not been implemented.');
-  }
-
   /// 写入一个或多个剪切板条目
   Future<bool> writeItems(
     List<ClipboardDataItem> items, {

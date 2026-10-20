@@ -120,9 +120,6 @@ class XueHuaNaviteClipboardPlugin :
     override fun onMethodCall(call: MethodCall, result: Result) {
         try {
             when (call.method) {
-                "getPlatformVersion" -> {
-                    result.success("Android ${Build.VERSION.RELEASE}")
-                }
                 "writeItems" -> {
                     val args = call.arguments as? Map<*, *>
                     result.success(handleWriteItems(args))
@@ -180,7 +177,6 @@ class XueHuaNaviteClipboardPlugin :
             val imageBytes = itemMap["imageBytes"] as? ByteArray
             val imageMimeType = (itemMap["imageMimeType"] as? String) ?: "image/png"
             val files = (itemMap["files"] as? List<*>)?.mapNotNull { it as? String }
-            val fileCopyMode = (itemMap["fileCopyMode"] as? String) ?: "copy"
             val colorValue = (itemMap["colorValue"] as? Number)?.toLong()
             val customFormats = itemMap["customFormats"] as? Map<*, *>
 
@@ -257,7 +253,6 @@ class XueHuaNaviteClipboardPlugin :
                 }
             }
 
-            // Persist metadata in ClipDescription.extras when needed
             if (clipItems.isEmpty()) {
                 clipItems.add(ClipData.Item(""))
                 mimeTypes.add(ClipDescription.MIMETYPE_TEXT_PLAIN)

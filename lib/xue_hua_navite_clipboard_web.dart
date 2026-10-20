@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:js_interop';
-import 'dart:typed_data';
 
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:web/web.dart' as web;
@@ -46,7 +45,9 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
   }
 
   void _startDomListening() {
-    if (_domClipboardListener != null) return;
+    if (_domClipboardListener != null) {
+      return;
+    }
     _domClipboardListener = ((web.Event _) {
       _incrementChangeCount();
     }).toJS;
@@ -56,16 +57,13 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
   }
 
   void _stopDomListening() {
-    if (_domClipboardListener == null) return;
+    if (_domClipboardListener == null) {
+      return;
+    }
     web.window.document.removeEventListener('copy', _domClipboardListener);
     web.window.document.removeEventListener('cut', _domClipboardListener);
     web.window.document.removeEventListener('paste', _domClipboardListener);
     _domClipboardListener = null;
-  }
-
-  @override
-  Future<String?> getPlatformVersion() async {
-    return web.window.navigator.userAgent;
   }
 
   @override
@@ -76,7 +74,9 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
     _expirationTimer?.cancel();
     _expirationTimer = null;
 
-    if (items.isEmpty) return false;
+    if (items.isEmpty) {
+      return false;
+    }
     final first = items.first;
 
     try {
@@ -133,7 +133,9 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
     try {
       final text = await web.window.navigator.clipboard.readText().toDart;
       final str = text.toDart;
-      if (str.isEmpty) return const <ClipboardDataItem>[];
+      if (str.isEmpty) {
+        return const <ClipboardDataItem>[];
+      }
 
       Uri? parsedUri;
       if (str.startsWith('http://') ||
@@ -166,7 +168,8 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
     bool hasUri = false;
     final Set<ClipboardDetectedPattern> patterns = <ClipboardDetectedPattern>{};
     try {
-      final text = (await web.window.navigator.clipboard.readText().toDart).toDart;
+      final text =
+          (await web.window.navigator.clipboard.readText().toDart).toDart;
       hasText = text.isNotEmpty;
       if (hasText) {
         final uri = Uri.tryParse(text.trim());
@@ -196,7 +199,9 @@ class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
       hasImage: false,
       hasFiles: false,
       hasColor: false,
-      rawPlatformFormats: hasText ? const <String>['text/plain'] : const <String>[],
+      rawPlatformFormats: hasText
+          ? const <String>['text/plain']
+          : const <String>[],
       detectedPatterns: patterns,
     );
   }

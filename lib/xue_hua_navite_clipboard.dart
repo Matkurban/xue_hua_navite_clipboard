@@ -48,11 +48,6 @@ class XueHuaNaviteClipboard {
         .trim();
   }
 
-  /// 获取平台系统版本
-  Future<String?> getPlatformVersion() {
-    return XueHuaNaviteClipboardPlatform.instance.getPlatformVersion();
-  }
-
   // ==================== 1. 便捷单项写入 API ====================
 
   /// 写入纯文本（支持附加敏感标记、本地限制、过期时间等）
@@ -251,7 +246,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.plainText.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.plainText;
   }
 
@@ -263,7 +260,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.html.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.html;
   }
 
@@ -275,7 +274,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.rtf.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.rtfBytes;
   }
 
@@ -287,7 +288,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.markdown.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.markdown ?? items.first.plainText;
   }
 
@@ -299,7 +302,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.uri.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.uri;
   }
 
@@ -311,7 +316,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.png.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.imageBytes;
   }
 
@@ -323,7 +330,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.fileList.mimeType,
     );
-    if (items.isEmpty) return const <String>[];
+    if (items.isEmpty) {
+      return const <String>[];
+    }
     final allFiles = <String>[];
     for (final item in items) {
       if (item.files != null) {
@@ -341,7 +350,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.fileList.mimeType,
     );
-    if (items.isEmpty || items.first.files == null || items.first.files!.isEmpty) {
+    if (items.isEmpty ||
+        items.first.files == null ||
+        items.first.files!.isEmpty) {
       return null;
     }
     return items.first.fileCopyMode;
@@ -355,7 +366,9 @@ class XueHuaNaviteClipboard {
       options: options,
       targetFormat: StandardClipboardFormat.color.mimeType,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.colorValue;
   }
 
@@ -377,7 +390,9 @@ class XueHuaNaviteClipboard {
       options: mergedOptions,
       targetFormat: format,
     );
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first.customFormats[format];
   }
 
@@ -386,7 +401,9 @@ class XueHuaNaviteClipboard {
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
     final items = await readItems(options: options);
-    if (items.isEmpty) return null;
+    if (items.isEmpty) {
+      return null;
+    }
     return items.first;
   }
 

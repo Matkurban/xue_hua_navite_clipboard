@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
@@ -27,9 +27,6 @@ class MockXueHuaNaviteClipboardPlatform
           activeListenerCount--;
         },
       );
-
-  @override
-  Future<String?> getPlatformVersion() => Future.value('42');
 
   @override
   Future<bool> writeItems(
@@ -68,18 +65,34 @@ class MockXueHuaNaviteClipboardPlatform
     bool detectPatterns = false,
   }) async {
     final first = storedItems.isNotEmpty ? storedItems.first : null;
-    final formats = <String>[
-      if (first?.plainText != null) 'text/plain',
-      if (first?.html != null) 'text/html',
-      if (first?.rtfBytes != null) 'text/rtf',
-      if (first?.markdown != null) 'text/markdown',
-      if (first?.uri != null) 'text/uri-list',
-      if (first?.imageBytes != null) 'image/png',
-      if (first?.files != null && first!.files!.isNotEmpty)
-        'application/x-file-list',
-      if (first?.colorValue != null) 'application/x-color',
-      if (first != null) ...first.customFormats.keys,
-    ];
+    final formats = <String>[];
+    if (first != null) {
+      if (first.plainText != null) {
+        formats.add('text/plain');
+      }
+      if (first.html != null) {
+        formats.add('text/html');
+      }
+      if (first.rtfBytes != null) {
+        formats.add('text/rtf');
+      }
+      if (first.markdown != null) {
+        formats.add('text/markdown');
+      }
+      if (first.uri != null) {
+        formats.add('text/uri-list');
+      }
+      if (first.imageBytes != null) {
+        formats.add('image/png');
+      }
+      if (first.files != null && first.files!.isNotEmpty) {
+        formats.add('application/x-file-list');
+      }
+      if (first.colorValue != null) {
+        formats.add('application/x-color');
+      }
+      formats.addAll(first.customFormats.keys);
+    }
     return ClipboardMetadata(
       changeCount: changeCount,
       itemCount: storedItems.length,
@@ -137,10 +150,6 @@ void main() {
 
   test('$MethodChannelXueHuaNaviteClipboard is the default instance', () {
     expect(initialPlatform, isInstanceOf<MethodChannelXueHuaNaviteClipboard>());
-  });
-
-  test('getPlatformVersion', () async {
-    expect(await clipboard.getPlatformVersion(), '42');
   });
 
   test('writeText and readText', () async {
@@ -210,13 +219,11 @@ void main() {
   });
 
   test('onClipboardChanged only activates native listener when subscribed', () async {
-    // 未设置监听时，原生端活跃监听数为 0
     expect(fakePlatform.activeListenerCount, 0);
 
     final events = <ClipboardChangeEvent>[];
     final sub = clipboard.onClipboardChanged.listen(events.add);
 
-    // 订阅后激活监听
     expect(fakePlatform.activeListenerCount, 1);
 
     await clipboard.writeText('Trigger event');
@@ -224,7 +231,6 @@ void main() {
     expect(events.length, 1);
     expect(events.first.changeCount, 1);
 
-    // 取消订阅后立即释放监听
     await sub.cancel();
     expect(fakePlatform.activeListenerCount, 0);
   });

@@ -44,14 +44,21 @@ class ClipboardWriteOptions {
   });
 
   Map<String, dynamic> toMap() {
-    return <String, dynamic>{
+    final map = <String, dynamic>{
       'buffer': buffer.wireName,
-      if (customBufferName != null) 'customBufferName': customBufferName,
       'isSensitive': isSensitive,
       'isTransient': isTransient,
       'localOnly': localOnly,
-      if (expiration != null) 'expirationMs': expiration!.inMilliseconds,
-      if (label != null) 'label': label,
     };
+    if (customBufferName != null) {
+      map['customBufferName'] = customBufferName;
+    }
+    if (expiration != null) {
+      map['expirationMs'] = expiration!.inMilliseconds;
+    }
+    if (label != null) {
+      map['label'] = label;
+    }
+    return map;
   }
 }

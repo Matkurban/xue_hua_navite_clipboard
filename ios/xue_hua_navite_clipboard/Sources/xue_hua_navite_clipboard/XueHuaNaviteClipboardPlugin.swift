@@ -110,8 +110,6 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any]
     switch call.method {
-    case "getPlatformVersion":
-      result("iOS " + UIDevice.current.systemVersion)
     case "writeItems":
       result(handleWriteItems(args: args))
     case "readItems":

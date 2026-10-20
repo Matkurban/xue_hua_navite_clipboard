@@ -70,19 +70,40 @@ class ClipboardDataItem {
 
   /// 转换为平台通道传输 Map
   Map<String, dynamic> toMap() {
-    return <String, dynamic>{
-      if (plainText != null) 'plainText': plainText,
-      if (html != null) 'html': html,
-      if (rtfBytes != null) 'rtfBytes': rtfBytes,
-      if (markdown != null) 'markdown': markdown,
-      if (uri != null) 'uri': uri.toString(),
-      if (imageBytes != null) 'imageBytes': imageBytes,
-      if (imageMimeType != null) 'imageMimeType': imageMimeType,
-      if (files != null && files!.isNotEmpty) 'files': files,
+    final map = <String, dynamic>{
       'fileCopyMode': fileCopyMode.wireName,
-      if (colorValue != null) 'colorValue': colorValue,
-      if (customFormats.isNotEmpty) 'customFormats': customFormats,
     };
+    if (plainText != null) {
+      map['plainText'] = plainText;
+    }
+    if (html != null) {
+      map['html'] = html;
+    }
+    if (rtfBytes != null) {
+      map['rtfBytes'] = rtfBytes;
+    }
+    if (markdown != null) {
+      map['markdown'] = markdown;
+    }
+    if (uri != null) {
+      map['uri'] = uri.toString();
+    }
+    if (imageBytes != null) {
+      map['imageBytes'] = imageBytes;
+    }
+    if (imageMimeType != null) {
+      map['imageMimeType'] = imageMimeType;
+    }
+    if (files != null && files!.isNotEmpty) {
+      map['files'] = files;
+    }
+    if (colorValue != null) {
+      map['colorValue'] = colorValue;
+    }
+    if (customFormats.isNotEmpty) {
+      map['customFormats'] = customFormats;
+    }
+    return map;
   }
 
   /// 从平台通道返回的 Map 解析
@@ -95,18 +116,24 @@ class ClipboardDataItem {
     final rawCustom = map['customFormats'];
     final Map<String, Uint8List> parsedCustom = <String, Uint8List>{};
     if (rawCustom is Map) {
-      rawCustom.forEach((key, value) {
+      for (final entry in rawCustom.entries) {
+        final key = entry.key;
+        final value = entry.value;
         if (key is String && value is Uint8List) {
           parsedCustom[key] = value;
         } else if (key is String && value is List<int>) {
           parsedCustom[key] = Uint8List.fromList(value);
         }
-      });
+      }
     }
 
     Uint8List? toUint8List(Object? raw) {
-      if (raw is Uint8List) return raw;
-      if (raw is List<int>) return Uint8List.fromList(raw);
+      if (raw is Uint8List) {
+        return raw;
+      }
+      if (raw is List<int>) {
+        return Uint8List.fromList(raw);
+      }
       return null;
     }
 

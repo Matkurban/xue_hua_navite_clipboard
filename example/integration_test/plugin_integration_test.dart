@@ -1,11 +1,3 @@
-// This is a basic Flutter integration test.
-//
-// Since integration tests run in a full Flutter application, they can interact
-// with the host side of a plugin implementation, unlike Dart unit tests.
-//
-// For more information about Flutter integration tests, please see
-// https://flutter.dev/to/integration-testing
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -14,11 +6,15 @@ import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('getPlatformVersion test', (WidgetTester tester) async {
-    final XueHuaNaviteClipboard plugin = XueHuaNaviteClipboard();
-    final String? version = await plugin.getPlatformVersion();
-    // The version string depends on the host platform running the test, so
-    // just assert that some non-empty string is returned.
-    expect(version?.isNotEmpty, true);
+  testWidgets('writeText and readText integration test', (
+    WidgetTester tester,
+  ) async {
+    final XueHuaNaviteClipboard plugin = XueHuaNaviteClipboard.instance;
+    const sample = 'integration_test_clipboard_payload';
+    final bool wrote = await plugin.writeText(sample);
+    expect(wrote, isTrue);
+
+    final String? readBack = await plugin.readText();
+    expect(readBack, sample);
   });
 }

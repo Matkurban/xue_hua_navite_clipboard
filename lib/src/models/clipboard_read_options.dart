@@ -22,12 +22,16 @@ class ClipboardReadOptions {
   });
 
   Map<String, dynamic> toMap() {
-    return <String, dynamic>{
+    final map = <String, dynamic>{
       'buffer': buffer.wireName,
-      if (customBufferName != null) 'customBufferName': customBufferName,
       'preferredImageFormat': preferredImageFormat.mimeType,
-      if (requestedCustomFormats.isNotEmpty)
-        'requestedCustomFormats': requestedCustomFormats,
     };
+    if (customBufferName != null) {
+      map['customBufferName'] = customBufferName;
+    }
+    if (requestedCustomFormats.isNotEmpty) {
+      map['requestedCustomFormats'] = requestedCustomFormats;
+    }
+    return map;
   }
 }
