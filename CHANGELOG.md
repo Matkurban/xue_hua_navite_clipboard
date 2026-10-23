@@ -1,3 +1,7 @@
+﻿## 1.0.2
+
+* fix Windows build with Visual Studio 2026 / CMake 4 by bumping googletest to v1.15.2
+
 ## 1.0.1
 
 * set minum flutter sdk to `3.47` version
