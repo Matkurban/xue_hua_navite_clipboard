@@ -155,6 +155,114 @@ bool WriteDwordFormat(const wchar_t* format_name, DWORD value) {
   return WriteGlobalBytes(fmt, &value, sizeof(DWORD));
 }
 
+// Trim GlobalSize padding so PNG payload ends at IEND.
+size_t EffectivePngSize(const uint8_t* data, size_t size) {
+  if (!data || size < 8 || data[0] != 0x89 || data[1] != 'P') {
+    return size;
+  }
+  for (size_t i = 8; i + 12 <= size; ++i) {
+    if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 &&
+        data[i + 3] == 0 && data[i + 4] == 'I' && data[i + 5] == 'E' &&
+        data[i + 6] == 'N' && data[i + 7] == 'D') {
+      return i + 12;
+    }
+  }
+  return size;
+}
+
+// Convert PNG bytes to CF_DIB (BITMAPINFOHEADER + 32bpp top-down pixels).
+// Returns nullptr on failure; caller must SetClipboardData or GlobalFree.
+HGLOBAL ConvertPngToDib(const uint8_t* png_data, size_t png_size) {
+  if (!png_data || png_size == 0) return nullptr;
+
+  Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+  ULONG_PTR gdiplusToken = 0;
+  if (Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr) !=
+      Gdiplus::Ok) {
+    return nullptr;
+  }
+
+  HGLOBAL result = nullptr;
+  HGLOBAL hpng = GlobalAlloc(GMEM_MOVEABLE, png_size);
+  if (hpng) {
+    void* locked = GlobalLock(hpng);
+    if (locked) {
+      std::memcpy(locked, png_data, png_size);
+      GlobalUnlock(hpng);
+      IStream* stream = nullptr;
+      // TRUE: stream owns and frees hpng on Release.
+      if (CreateStreamOnHGlobal(hpng, TRUE, &stream) == S_OK && stream) {
+        hpng = nullptr;
+        std::unique_ptr<Gdiplus::Bitmap> bitmap(
+            Gdiplus::Bitmap::FromStream(stream));
+        stream->Release();
+
+        if (bitmap && bitmap->GetLastStatus() == Gdiplus::Ok) {
+          const UINT width = bitmap->GetWidth();
+          const UINT height = bitmap->GetHeight();
+          if (width > 0 && height > 0) {
+            Gdiplus::Bitmap converted(width, height, PixelFormat32bppARGB);
+            {
+              Gdiplus::Graphics graphics(&converted);
+              graphics.DrawImage(bitmap.get(), 0, 0,
+                                 static_cast<INT>(width),
+                                 static_cast<INT>(height));
+            }
+
+            Gdiplus::BitmapData data = {};
+            Gdiplus::Rect rect(0, 0, static_cast<INT>(width),
+                               static_cast<INT>(height));
+            if (converted.LockBits(&rect, Gdiplus::ImageLockModeRead,
+                                   PixelFormat32bppARGB, &data) ==
+                Gdiplus::Ok) {
+              const size_t row_bytes =
+                  ((static_cast<size_t>(width) * 4u + 3u) / 4u) * 4u;
+              const size_t image_size = row_bytes * height;
+              const size_t total = sizeof(BITMAPINFOHEADER) + image_size;
+              HGLOBAL hdib = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, total);
+              if (hdib) {
+                auto* bih = static_cast<BITMAPINFOHEADER*>(GlobalLock(hdib));
+                if (bih) {
+                  bih->biSize = sizeof(BITMAPINFOHEADER);
+                  bih->biWidth = static_cast<LONG>(width);
+                  // Negative height => top-down DIB matching GDI+ scan order.
+                  bih->biHeight = -static_cast<LONG>(height);
+                  bih->biPlanes = 1;
+                  bih->biBitCount = 32;
+                  bih->biCompression = BI_RGB;
+                  bih->biSizeImage = static_cast<DWORD>(image_size);
+
+                  auto* dest = reinterpret_cast<uint8_t*>(bih + 1);
+                  const auto* src = static_cast<const uint8_t*>(data.Scan0);
+                  for (UINT y = 0; y < height; ++y) {
+                    std::memcpy(
+                        dest + y * row_bytes,
+                        src + static_cast<size_t>(y) * static_cast<size_t>(data.Stride < 0 ? -data.Stride : data.Stride),
+                        static_cast<size_t>(width) * 4u);
+                  }
+                  GlobalUnlock(hdib);
+                  result = hdib;
+                } else {
+                  GlobalFree(hdib);
+                }
+              }
+              converted.UnlockBits(&data);
+            }
+          }
+        }
+      } else if (hpng) {
+        GlobalFree(hpng);
+        hpng = nullptr;
+      }
+    } else {
+      GlobalFree(hpng);
+    }
+  }
+
+  Gdiplus::GdiplusShutdown(gdiplusToken);
+  return result;
+}
+
 // Convert CF_DIB global memory to PNG bytes using GDI+
 std::vector<uint8_t> ConvertDibToPng(HGLOBAL hdib) {
   std::vector<uint8_t> png_bytes;
@@ -457,7 +565,7 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
       }
     }
 
-    // 6. Image (PNG)
+    // 6. Image (PNG + CF_DIB so Paint/Office/etc. can paste)
     if (const auto* img_val = GetMapValue(*item_map, "imageBytes")) {
       if (const auto* img_bytes = std::get_if<std::vector<uint8_t>>(img_val)) {
         if (!img_bytes->empty()) {
@@ -468,6 +576,13 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
           UINT cf_mime_png = RegisterClipboardFormatW(L"image/png");
           if (cf_mime_png != 0) {
             WriteGlobalBytes(cf_mime_png, img_bytes->data(), img_bytes->size());
+          }
+          HGLOBAL hdib =
+              ConvertPngToDib(img_bytes->data(), img_bytes->size());
+          if (hdib) {
+            if (!SetClipboardData(CF_DIB, hdib)) {
+              GlobalFree(hdib);
+            }
           }
         }
       }
@@ -667,6 +782,7 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
         const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
         size_t sz = GlobalSize(hdata);
         if (ptr && sz > 0) {
+          sz = EffectivePngSize(ptr, sz);
           image_bytes.assign(ptr, ptr + sz);
         }
         GlobalUnlock(hdata);
@@ -677,6 +793,7 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
         const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
         size_t sz = GlobalSize(hdata);
         if (ptr && sz > 0) {
+          sz = EffectivePngSize(ptr, sz);
           image_bytes.assign(ptr, ptr + sz);
         }
         GlobalUnlock(hdata);
@@ -815,9 +932,13 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
     UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
     bool has_uri = cf_url != 0 && IsClipboardFormatAvailable(cf_url);
     UINT cf_png = RegisterClipboardFormatW(L"PNG");
-    bool has_image = (cf_png != 0 && IsClipboardFormatAvailable(cf_png)) ||
-                     IsClipboardFormatAvailable(CF_DIB) ||
-                     IsClipboardFormatAvailable(CF_BITMAP);
+    UINT cf_mime_png_meta = RegisterClipboardFormatW(L"image/png");
+    bool has_image =
+        (cf_png != 0 && IsClipboardFormatAvailable(cf_png)) ||
+        (cf_mime_png_meta != 0 &&
+         IsClipboardFormatAvailable(cf_mime_png_meta)) ||
+        IsClipboardFormatAvailable(CF_DIB) ||
+        IsClipboardFormatAvailable(CF_BITMAP);
     bool has_files = IsClipboardFormatAvailable(CF_HDROP) != FALSE;
     UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
     bool has_color = cf_color != 0 && IsClipboardFormatAvailable(cf_color);
