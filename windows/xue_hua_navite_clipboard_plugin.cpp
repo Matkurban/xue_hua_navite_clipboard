@@ -263,63 +263,218 @@ HGLOBAL ConvertPngToDib(const uint8_t* png_data, size_t png_size) {
   return result;
 }
 
-// Convert CF_DIB global memory to PNG bytes using GDI+
+// Save a GDI+ Bitmap to PNG bytes (trimmed at IEND).
+std::vector<uint8_t> SaveBitmapToPng(Gdiplus::Bitmap* bitmap) {
+  std::vector<uint8_t> png_bytes;
+  if (!bitmap || bitmap->GetLastStatus() != Gdiplus::Ok) return png_bytes;
+
+  CLSID png_clsid = {0x557cf406,
+                     0x1a04,
+                     0x11d3,
+                     {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
+  IStream* stream = nullptr;
+  if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) != S_OK || !stream) {
+    return png_bytes;
+  }
+  if (bitmap->Save(stream, &png_clsid, nullptr) == Gdiplus::Ok) {
+    HGLOBAL hstream_mem = nullptr;
+    if (GetHGlobalFromStream(stream, &hstream_mem) == S_OK && hstream_mem) {
+      SIZE_T stream_size = GlobalSize(hstream_mem);
+      void* stream_ptr = GlobalLock(hstream_mem);
+      if (stream_ptr && stream_size > 0) {
+        const auto* sp = static_cast<const uint8_t*>(stream_ptr);
+        const size_t eff = EffectivePngSize(sp, stream_size);
+        png_bytes.assign(sp, sp + eff);
+        GlobalUnlock(hstream_mem);
+      }
+    }
+  }
+  stream->Release();
+  return png_bytes;
+}
+
+// Convert an HBITMAP (e.g. CF_BITMAP) to PNG. Does not delete hbmp.
+// BitBlt into a 32bpp DIB section is the most reliable path for clipboard
+// DDBs (PrintScreen); Bitmap::FromHBITMAP is unreliable for many DDBs.
+std::vector<uint8_t> ConvertHBitmapToPng(HBITMAP hbmp) {
+  std::vector<uint8_t> png_bytes;
+  if (!hbmp) return png_bytes;
+
+  BITMAP bm = {};
+  if (GetObject(hbmp, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 ||
+      bm.bmHeight <= 0) {
+    return png_bytes;
+  }
+  if (bm.bmWidth > 16384 || bm.bmHeight > 16384) {
+    return png_bytes;
+  }
+
+  const int width = bm.bmWidth;
+  const int height = bm.bmHeight;
+  const size_t stride = static_cast<size_t>(width) * 4u;
+  const size_t pixel_bytes = stride * static_cast<size_t>(height);
+
+  BITMAPINFO bmi = {};
+  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth = width;
+  bmi.bmiHeader.biHeight = -height;  // top-down
+  bmi.bmiHeader.biPlanes = 1;
+  bmi.bmiHeader.biBitCount = 32;
+  bmi.bmiHeader.biCompression = BI_RGB;
+  bmi.bmiHeader.biSizeImage = static_cast<DWORD>(pixel_bytes);
+
+  HDC screen_dc = GetDC(nullptr);
+  if (!screen_dc) return png_bytes;
+
+  void* section_bits = nullptr;
+  HBITMAP section = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS,
+                                     &section_bits, nullptr, 0);
+  if (!section || !section_bits) {
+    if (section) DeleteObject(section);
+    ReleaseDC(nullptr, screen_dc);
+    return png_bytes;
+  }
+
+  HDC src_dc = CreateCompatibleDC(screen_dc);
+  HDC dst_dc = CreateCompatibleDC(screen_dc);
+  bool blt_ok = false;
+  if (src_dc && dst_dc) {
+    HGDIOBJ old_src = SelectObject(src_dc, hbmp);
+    HGDIOBJ old_dst = SelectObject(dst_dc, section);
+    blt_ok = BitBlt(dst_dc, 0, 0, width, height, src_dc, 0, 0, SRCCOPY) != 0;
+    SelectObject(src_dc, old_src);
+    SelectObject(dst_dc, old_dst);
+  }
+  if (src_dc) DeleteDC(src_dc);
+  if (dst_dc) DeleteDC(dst_dc);
+  ReleaseDC(nullptr, screen_dc);
+
+  if (!blt_ok) {
+    DeleteObject(section);
+    return png_bytes;
+  }
+
+  std::vector<uint8_t> pixels(static_cast<const uint8_t*>(section_bits),
+                              static_cast<const uint8_t*>(section_bits) +
+                                  pixel_bytes);
+  DeleteObject(section);
+
+  Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+  ULONG_PTR gdiplusToken = 0;
+  if (Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr) !=
+      Gdiplus::Ok) {
+    return png_bytes;
+  }
+
+  {
+    Gdiplus::Bitmap bitmap(width, height, static_cast<INT>(stride),
+                           PixelFormat32bppARGB, pixels.data());
+    if (bitmap.GetLastStatus() == Gdiplus::Ok) {
+      png_bytes = SaveBitmapToPng(&bitmap);
+    }
+  }
+
+  Gdiplus::GdiplusShutdown(gdiplusToken);
+  return png_bytes;
+}
+
+// Color-table / mask bytes that follow biSize for a CF_DIB payload.
+size_t DibColorTableBytes(const BITMAPINFOHEADER* bih) {
+  if (!bih) return 0;
+  if (bih->biBitCount <= 8) {
+    const DWORD colors =
+        bih->biClrUsed ? bih->biClrUsed : (1u << bih->biBitCount);
+    return colors * sizeof(RGBQUAD);
+  }
+  // Masks are embedded inside BITMAPV4/V5 headers; only classic INFOHEADER
+  // carries 3 DWORDs after biSize for BI_BITFIELDS.
+  if (bih->biCompression == BI_BITFIELDS &&
+      bih->biSize == sizeof(BITMAPINFOHEADER)) {
+    return 3 * sizeof(DWORD);
+  }
+  return 0;
+}
+
+// Convert CF_DIB / CF_DIBV5 global memory to PNG.
+// Avoids Gdiplus::Bitmap::FromBITMAPINFO on clipboard memory (AVs on common
+// screenshot DIBs: 32bpp BI_RGB, BITMAPV5HEADER, BI_BITFIELDS).
 std::vector<uint8_t> ConvertDibToPng(HGLOBAL hdib) {
   std::vector<uint8_t> png_bytes;
   if (!hdib) return png_bytes;
 
+  const SIZE_T total_size = GlobalSize(hdib);
   void* dib_ptr = GlobalLock(hdib);
-  if (!dib_ptr) return png_bytes;
-
-  Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-  ULONG_PTR gdiplusToken = 0;
-  if (Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr) ==
-      Gdiplus::Ok) {
-    BITMAPINFO* bmi = static_cast<BITMAPINFO*>(dib_ptr);
-    size_t palette_bytes = 0;
-    if (bmi->bmiHeader.biBitCount <= 8) {
-      DWORD colors = bmi->bmiHeader.biClrUsed
-                         ? bmi->bmiHeader.biClrUsed
-                         : (1u << bmi->bmiHeader.biBitCount);
-      palette_bytes = colors * sizeof(RGBQUAD);
-    } else if (bmi->bmiHeader.biCompression == BI_BITFIELDS) {
-      palette_bytes = 3 * sizeof(DWORD);
-    }
-    void* bits = reinterpret_cast<uint8_t*>(dib_ptr) +
-                 bmi->bmiHeader.biSize + palette_bytes;
-
-    std::unique_ptr<Gdiplus::Bitmap> bitmap(
-        Gdiplus::Bitmap::FromBITMAPINFO(bmi, bits));
-    if (bitmap && bitmap->GetLastStatus() == Gdiplus::Ok) {
-      CLSID png_clsid = {0x557cf406,
-                         0x1a04,
-                         0x11d3,
-                         {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-      IStream* stream = nullptr;
-      if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) == S_OK && stream) {
-        if (bitmap->Save(stream, &png_clsid, nullptr) == Gdiplus::Ok) {
-          HGLOBAL hstream_mem = nullptr;
-          if (GetHGlobalFromStream(stream, &hstream_mem) == S_OK &&
-              hstream_mem) {
-            SIZE_T stream_size = GlobalSize(hstream_mem);
-            void* stream_ptr = GlobalLock(hstream_mem);
-            if (stream_ptr && stream_size > 0) {
-              png_bytes.resize(stream_size);
-              std::memcpy(png_bytes.data(), stream_ptr, stream_size);
-              GlobalUnlock(hstream_mem);
-            }
-          }
-        }
-        stream->Release();
-      }
-    }
-    Gdiplus::GdiplusShutdown(gdiplusToken);
+  if (!dib_ptr || total_size < sizeof(BITMAPINFOHEADER)) {
+    if (dib_ptr) GlobalUnlock(hdib);
+    return png_bytes;
   }
 
+  // Copy out of clipboard memory before unlocking - GDI must not touch the
+  // clipboard HGLOBAL after we return / unlock.
+  std::vector<uint8_t> dib_copy(static_cast<const uint8_t*>(dib_ptr),
+                                static_cast<const uint8_t*>(dib_ptr) +
+                                    total_size);
   GlobalUnlock(hdib);
+
+  auto* bih = reinterpret_cast<BITMAPINFOHEADER*>(dib_copy.data());
+  if (bih->biSize < sizeof(BITMAPINFOHEADER) || bih->biSize > dib_copy.size() ||
+      bih->biWidth <= 0 || bih->biHeight == 0 || bih->biPlanes != 1) {
+    return png_bytes;
+  }
+
+  const LONG abs_h = bih->biHeight < 0 ? -bih->biHeight : bih->biHeight;
+  // Guard against corrupt / hostile headers that would OOM or AV.
+  if (bih->biWidth > 16384 || abs_h > 16384) {
+    return png_bytes;
+  }
+
+  const size_t color_table = DibColorTableBytes(bih);
+  const size_t bits_offset = static_cast<size_t>(bih->biSize) + color_table;
+  if (bits_offset >= dib_copy.size()) {
+    return png_bytes;
+  }
+  void* bits = dib_copy.data() + bits_offset;
+  auto* bmi = reinterpret_cast<BITMAPINFO*>(dib_copy.data());
+
+  HDC hdc = GetDC(nullptr);
+  if (!hdc) return png_bytes;
+
+  // CreateDIBitmap is far more tolerant of clipboard DIB layouts than
+  // Gdiplus::Bitmap::FromBITMAPINFO (which AVs on many PrintScreen / Snip DIBs).
+  HBITMAP hbmp =
+      CreateDIBitmap(hdc, bih, CBM_INIT, bits, bmi, DIB_RGB_COLORS);
+
+  if (!hbmp) {
+    // Fallback for synthesized / odd DIBs where CreateDIBitmap returns NULL.
+    const int width = static_cast<int>(bih->biWidth);
+    const int height = static_cast<int>(abs_h);
+    HDC mem_dc = CreateCompatibleDC(hdc);
+    if (mem_dc) {
+      hbmp = CreateCompatibleBitmap(hdc, width, height);
+      if (hbmp) {
+        HGDIOBJ old = SelectObject(mem_dc, hbmp);
+        const int copied =
+            SetDIBits(mem_dc, hbmp, 0, height, bits, bmi, DIB_RGB_COLORS);
+        SelectObject(mem_dc, old);
+        if (copied == 0) {
+          DeleteObject(hbmp);
+          hbmp = nullptr;
+        }
+      }
+      DeleteDC(mem_dc);
+    }
+  }
+
+  ReleaseDC(nullptr, hdc);
+
+  if (!hbmp) {
+    return png_bytes;
+  }
+
+  png_bytes = ConvertHBitmapToPng(hbmp);
+  DeleteObject(hbmp);
   return png_bytes;
 }
-
 const flutter::EncodableValue* GetMapValue(const flutter::EncodableMap& map,
                                            const char* key) {
   auto it = map.find(flutter::EncodableValue(key));
@@ -772,7 +927,7 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
       }
     }
 
-    // 6. Image (Prefer PNG, fallback to CF_DIB -> PNG conversion)
+    // 6. Image (Prefer PNG, then CF_BITMAP, then CF_DIB / CF_DIBV5)
     UINT cf_png = RegisterClipboardFormatW(L"PNG");
     UINT cf_mime_png = RegisterClipboardFormatW(L"image/png");
     std::vector<uint8_t> image_bytes;
@@ -787,7 +942,9 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
         }
         GlobalUnlock(hdata);
       }
-    } else if (cf_mime_png != 0 && IsClipboardFormatAvailable(cf_mime_png)) {
+    }
+    if (image_bytes.empty() && cf_mime_png != 0 &&
+        IsClipboardFormatAvailable(cf_mime_png)) {
       HANDLE hdata = GetClipboardData(cf_mime_png);
       if (hdata) {
         const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
@@ -798,9 +955,28 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
         }
         GlobalUnlock(hdata);
       }
-    } else if (IsClipboardFormatAvailable(CF_DIB)) {
+    }
+    // Prefer CF_BITMAP over synthesized CF_DIB: PrintScreen / snip often
+    // expose a DDB first; GetClipboardData(CF_DIB) synthesis can yield a DIB
+    // that CreateDIBitmap rejects, while the HBITMAP itself is fine.
+    if (image_bytes.empty() && IsClipboardFormatAvailable(CF_BITMAP)) {
+      // CF_BITMAP returns an HBITMAP, not an HGLOBAL - never GlobalLock it.
+      HANDLE hbm = GetClipboardData(CF_BITMAP);
+      if (hbm) {
+        image_bytes = ConvertHBitmapToPng(static_cast<HBITMAP>(hbm));
+      }
+    }
+    if (image_bytes.empty() && IsClipboardFormatAvailable(CF_DIB)) {
       HANDLE hdib = GetClipboardData(CF_DIB);
-      image_bytes = ConvertDibToPng(hdib);
+      if (hdib) {
+        image_bytes = ConvertDibToPng(hdib);
+      }
+    }
+    if (image_bytes.empty() && IsClipboardFormatAvailable(CF_DIBV5)) {
+      HANDLE hdib = GetClipboardData(CF_DIBV5);
+      if (hdib) {
+        image_bytes = ConvertDibToPng(hdib);
+      }
     }
 
     if (!image_bytes.empty()) {
@@ -956,8 +1132,14 @@ void XueHuaNaviteClipboardPlugin::HandleMethodCall(
             case CF_UNICODETEXT:
               raw_formats.push_back(flutter::EncodableValue("CF_UNICODETEXT"));
               break;
+            case CF_BITMAP:
+              raw_formats.push_back(flutter::EncodableValue("CF_BITMAP"));
+              break;
             case CF_DIB:
               raw_formats.push_back(flutter::EncodableValue("CF_DIB"));
+              break;
+            case CF_DIBV5:
+              raw_formats.push_back(flutter::EncodableValue("CF_DIBV5"));
               break;
             case CF_HDROP:
               raw_formats.push_back(flutter::EncodableValue("CF_HDROP"));

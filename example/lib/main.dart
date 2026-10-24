@@ -347,7 +347,18 @@ class _MyAppState extends State<MyApp> {
                         const SizedBox(height: 8),
                         const Text('Image Preview (PNG):'),
                         const SizedBox(height: 4),
-                        Image.memory(_currentItem!.imageBytes!, height: 100, fit: BoxFit.contain),
+                        Image.memory(
+                          _currentItem!.imageBytes!,
+                          height: 100,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) {
+                            final n = _currentItem!.imageBytes!.length;
+                            return Text(
+                              'Image decode failed ($n bytes): $error',
+                              style: const TextStyle(color: Colors.red, fontSize: 12),
+                            );
+                          },
+                        ),
                       ],
                     ],
                   ),
