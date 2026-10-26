@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
@@ -277,6 +277,26 @@ void main() {
     final readPng = await clipboard.readImage();
     expect(readPng, isNotNull);
     expect(readPng!.first, 0x89);
+
+    // Markdown / URI (API-only; example has no dedicated buttons)
+    const md = '# XueHua\n**bold** and `code`';
+    expect(await clipboard.writeMarkdown(md), isTrue);
+    final readMd = await clipboard.readMarkdown();
+    expect(readMd, isNotNull);
+    expect(readMd!.contains('XueHua') || readMd.contains('bold'), isTrue);
+    final mdMeta = await clipboard.getMetadata();
+    expect(mdMeta.hasMarkdown || mdMeta.hasPlainText, isTrue);
+
+    final uri = Uri.parse('https://example.com/xuehua-clipboard');
+    expect(await clipboard.writeUri(uri), isTrue);
+    final readUriVal = await clipboard.readUri();
+    final uriText = await clipboard.readText();
+    expect(
+      (readUriVal != null && readUriVal.toString().contains('example.com')) ||
+          (uriText != null && uriText.contains('example.com')),
+      isTrue,
+      reason: 'uri=$readUriVal text=$uriText',
+    );
 
     final tmp = await Directory.systemTemp.createTemp('xh_clip_api_');
     final f = File('${tmp.path}/one.txt')..writeAsStringSync('one');
