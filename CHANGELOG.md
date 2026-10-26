@@ -1,3 +1,11 @@
+## 1.0.7
+
+* fix macOS: custom binary formats (MIME/UTI) were dropped after writeObjects — re-declare via addTypes/setData so readCustomData roundtrips
+* fix macOS/iOS: nested customFormats map cast no longer silently fails (Flutter delivers [AnyHashable:Any] / NSDictionary)
+* fix iOS: multi-file write now emits one pasteboard item per path and reinforces via UIPasteboard.urls
+* fix iOS: readItems no longer leaks pasteboard-level string/url across items; file URLs parse from URL/String/Data; hasFiles detects file URLs via pb.urls
+* test: macOS + iOS simulator example UI driver (integration_test) — clear/text/chinese/sensitive/html/rtf/png/color/custom/files/metadata/listener + API parity all pass
+
 ## 1.0.6
 
 * Windows: full example UI driver verification (integration_test) - clear/text/chinese/sensitive/html/rtf/png/color/custom/files/metadata/listener all pass

@@ -148,13 +148,17 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
 
     pb.clearContents()
 
-    var pasteboardObjects: [NSPasteboardWriting] = []
+    // Collect file URLs separately — NSPasteboard prefers NSURL writers for files.
+    var fileUrls: [NSURL] = []
+    var pasteboardItems: [NSPasteboardItem] = []
+    // Custom MIME/UTI payloads: NSPasteboardItem + writeObjects can drop non-UTI
+    // types on modern macOS, so we apply them with declareTypes/setData after.
+    var deferredCustom: [(NSPasteboard.PasteboardType, Data)] = []
 
     for item in rawItems {
       if let files = item["files"] as? [String], !files.isEmpty {
         for filePath in files {
-          let fileUrl = NSURL(fileURLWithPath: filePath)
-          pasteboardObjects.append(fileUrl)
+          fileUrls.append(NSURL(fileURLWithPath: filePath))
         }
       }
 
@@ -209,11 +213,47 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
           pbItem.setData(colorData, forType: .color)
           hasItemData = true
         }
-      }
-      if let customFormats = item["customFormats"] as? [String: FlutterStandardTypedData] {
-        for (fmtKey, typedData) in customFormats {
-          pbItem.setData(typedData.data, forType: NSPasteboard.PasteboardType(fmtKey))
+      } else if let colorNum = item["colorValue"] as? NSNumber {
+        let colorValue = colorNum.intValue
+        let a = CGFloat((colorValue >> 24) & 0xFF) / 255.0
+        let r = CGFloat((colorValue >> 16) & 0xFF) / 255.0
+        let g = CGFloat((colorValue >> 8) & 0xFF) / 255.0
+        let b = CGFloat(colorValue & 0xFF) / 255.0
+        let nsColor = NSColor(srgbRed: r, green: g, blue: b, alpha: a)
+        if let colorData = try? NSKeyedArchiver.archivedData(withRootObject: nsColor, requiringSecureCoding: false) {
+          pbItem.setData(colorData, forType: .color)
           hasItemData = true
+        }
+      }
+
+      if let rawCustom = item["customFormats"] {
+        let dict: NSDictionary?
+        if let d = rawCustom as? NSDictionary {
+          dict = d
+        } else if let d = rawCustom as? [AnyHashable: Any] {
+          dict = d as NSDictionary
+        } else {
+          dict = nil
+        }
+        if let dict = dict {
+          for (rawKey, rawValue) in dict {
+            let keyStr = "\(rawKey)"
+            var data: Data?
+            if let typed = rawValue as? FlutterStandardTypedData {
+              data = typed.data
+            } else if let rawData = rawValue as? Data {
+              data = rawData
+            } else if let bytes = rawValue as? [UInt8] {
+              data = Data(bytes)
+            }
+            if let data = data {
+              let pbType = NSPasteboard.PasteboardType(keyStr)
+              // Also set on the item for multi-item scenarios.
+              pbItem.setData(data, forType: pbType)
+              deferredCustom.append((pbType, data))
+              hasItemData = true
+            }
+          }
         }
       }
 
@@ -226,14 +266,34 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
       }
 
       if hasItemData {
-        pasteboardObjects.append(pbItem)
+        pasteboardItems.append(pbItem)
       }
     }
 
-    if pasteboardObjects.isEmpty {
+    var writers: [NSPasteboardWriting] = []
+    writers.append(contentsOf: fileUrls)
+    writers.append(contentsOf: pasteboardItems)
+
+    if writers.isEmpty {
       return false
     }
-    return pb.writeObjects(pasteboardObjects)
+
+    let wrote = pb.writeObjects(writers)
+
+    // Re-declare and set custom types at pasteboard level. writeObjects alone
+    // may omit non-UTI / MIME-style pasteboard types on recent macOS.
+    if !deferredCustom.isEmpty {
+      let existing = pb.types ?? []
+      let customTypes = deferredCustom.map { $0.0 }
+      pb.addTypes(customTypes, owner: nil)
+      for (pbType, data) in deferredCustom {
+        pb.setData(data, forType: pbType)
+      }
+      // Keep previously written standard types discoverable.
+      _ = existing
+    }
+
+    return wrote
   }
 
   private func handleReadItems(args: [String: Any]?) -> [[String: Any?]] {
@@ -297,7 +357,11 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
 
       var customMap: [String: FlutterStandardTypedData] = [:]
       for fmt in requestedCustom {
-        if let rawData = item.data(forType: NSPasteboard.PasteboardType(fmt)) {
+        let pbType = NSPasteboard.PasteboardType(fmt)
+        if let rawData = item.data(forType: pbType) {
+          customMap[fmt] = FlutterStandardTypedData(bytes: rawData)
+        } else if let rawData = pb.data(forType: pbType) {
+          // Fallback when custom data was written via pasteboard-level setData.
           customMap[fmt] = FlutterStandardTypedData(bytes: rawData)
         }
       }

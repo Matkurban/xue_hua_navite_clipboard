@@ -180,9 +180,18 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
           dict[Self.utiPng] = imgTyped.data
         }
       }
-      if let files = item["files"] as? [String], let firstFile = files.first {
-        let fileUrl = URL(fileURLWithPath: firstFile)
-        dict[Self.utiFileUrl] = fileUrl
+      // UIPasteboard represents multiple files as multiple items; keep the
+      // first URL on this item and emit extra items for the rest so readFiles
+      // (which aggregates across items) returns the full list.
+      if let files = item["files"] as? [String], !files.isEmpty {
+        for (idx, filePath) in files.enumerated() {
+          let fileUrl = URL(fileURLWithPath: filePath)
+          if idx == 0 {
+            dict[Self.utiFileUrl] = fileUrl
+          } else {
+            pbItems.append([Self.utiFileUrl: fileUrl])
+          }
+        }
       }
       if let colorValue = item["colorValue"] as? Int {
         let a = CGFloat((colorValue >> 24) & 0xFF) / 255.0
@@ -191,9 +200,18 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         let b = CGFloat(colorValue & 0xFF) / 255.0
         dict["com.apple.uikit.color"] = UIColor(red: r, green: g, blue: b, alpha: a)
       }
-      if let customFormats = item["customFormats"] as? [String: FlutterStandardTypedData] {
-        for (fmtKey, typedData) in customFormats {
-          dict[fmtKey] = typedData.data
+      // Flutter nested maps arrive as [AnyHashable: Any]; a direct cast to
+      // [String: FlutterStandardTypedData] silently fails and drops custom data.
+      if let customFormats = item["customFormats"] as? [AnyHashable: Any] {
+        for (rawKey, rawValue) in customFormats {
+          guard let fmtKey = rawKey as? String else { continue }
+          if let typed = rawValue as? FlutterStandardTypedData {
+            dict[fmtKey] = typed.data
+          } else if let rawData = rawValue as? Data {
+            dict[fmtKey] = rawData
+          } else if let bytes = rawValue as? [UInt8] {
+            dict[fmtKey] = Data(bytes)
+          }
         }
       }
       if isSensitive {
@@ -217,6 +235,25 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     }
 
     pb.setItems(pbItems, options: pbOptions)
+
+    // Reinforce file URLs via the dedicated API — more reliable on iOS than
+    // public.file-url dictionary entries alone for multi-file readback.
+    var allFileUrls: [URL] = []
+    for item in rawItems {
+      if let files = item["files"] as? [String] {
+        allFileUrls.append(contentsOf: files.map { URL(fileURLWithPath: $0) })
+      }
+    }
+    if !allFileUrls.isEmpty {
+      // If the pasteboard only contains files, prefer urls setter.
+      let onlyFiles = pbItems.allSatisfy { dict in
+        Set(dict.keys.map { "\($0)" }).subtracting([Self.utiFileUrl, Self.utiConcealed, Self.utiTransient]).isEmpty
+      }
+      if onlyFiles {
+        pb.urls = allFileUrls
+      }
+    }
+
     return true
   }
 
@@ -233,10 +270,38 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
       return []
     }
 
+    func dataString(_ value: Any?) -> String? {
+      if let s = value as? String { return s }
+      if let d = value as? Data { return String(data: d, encoding: .utf8) }
+      return nil
+    }
+
+    func extractFilePath(_ value: Any?) -> String? {
+      if let url = value as? URL {
+        return url.isFileURL ? url.path : url.absoluteString
+      }
+      if let s = value as? String {
+        if s.hasPrefix("file:"), let url = URL(string: s) {
+          return url.path
+        }
+        if s.hasPrefix("/") { return s }
+        return s
+      }
+      if let d = value as? Data, let s = String(data: d, encoding: .utf8) {
+        if s.hasPrefix("file:"), let url = URL(string: s) {
+          return url.path
+        }
+        return s
+      }
+      return nil
+    }
+
     var results: [[String: Any?]] = []
 
     for itemDict in rawItems {
-      var plainText: String? = pb.string
+      // Prefer per-item values. Avoid UIPasteboard.string/url/image which
+      // reflect only one "best" representation and leak across items.
+      var plainText: String?
       if let textVal = itemDict[Self.utiPlainText] as? String {
         plainText = textVal
       } else if let textData = itemDict[Self.utiPlainText] as? Data {
@@ -265,8 +330,8 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
       var uriStr: String?
       if let urlVal = itemDict[Self.utiUrl] as? URL {
         uriStr = urlVal.absoluteString
-      } else if let urlVal = pb.url {
-        uriStr = urlVal.absoluteString
+      } else if let urlStr = dataString(itemDict[Self.utiUrl]) {
+        uriStr = urlStr
       }
 
       var imageBytes: FlutterStandardTypedData?
@@ -274,17 +339,24 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         imageBytes = FlutterStandardTypedData(bytes: pngData)
       } else if let uiImg = itemDict[Self.utiPng] as? UIImage, let pngData = uiImg.pngData() {
         imageBytes = FlutterStandardTypedData(bytes: pngData)
-      } else if let uiImg = pb.image, let pngData = uiImg.pngData() {
+      } else if let jpegData = itemDict[Self.utiJpeg] as? Data,
+                let uiImg = UIImage(data: jpegData),
+                let pngData = uiImg.pngData() {
         imageBytes = FlutterStandardTypedData(bytes: pngData)
       }
 
       var files: [String] = []
-      if let fileUrl = itemDict[Self.utiFileUrl] as? URL {
-        files.append(fileUrl.path)
+      // public.file-url may arrive as URL, String, or Data.
+      if let path = extractFilePath(itemDict[Self.utiFileUrl]) {
+        files.append(path)
+      }
+      // Some iOS versions also expose file URLs under public.url.
+      if files.isEmpty, let urlVal = itemDict[Self.utiUrl] as? URL, urlVal.isFileURL {
+        files.append(urlVal.path)
       }
 
       var colorValue: Int?
-      if let uiColor = pb.color {
+      if let uiColor = itemDict["com.apple.uikit.color"] as? UIColor {
         var r: CGFloat = 0
         var g: CGFloat = 0
         var b: CGFloat = 0
@@ -304,7 +376,15 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
           customMap[fmt] = FlutterStandardTypedData(bytes: rawData)
         } else if let rawStr = itemDict[fmt] as? String, let data = rawStr.data(using: .utf8) {
           customMap[fmt] = FlutterStandardTypedData(bytes: data)
+        } else if let typed = itemDict[fmt] as? FlutterStandardTypedData {
+          customMap[fmt] = typed
         }
+      }
+
+      // If this item is file-only, do not surface the file URL as plainText/uri.
+      if !files.isEmpty {
+        if let pt = plainText, pt.hasPrefix("file:") { plainText = nil }
+        if let u = uriStr, u.hasPrefix("file:") { uriStr = nil }
       }
 
       results.append([
@@ -320,6 +400,32 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         "colorValue": colorValue,
         "customFormats": customMap
       ])
+    }
+
+    // Aggregate pasteboard-level URLs if per-item extraction missed them.
+    if let urls = pb.urls, !urls.isEmpty {
+      let existing = Set(results.compactMap { $0["files"] as? [String] }.flatMap { $0 })
+      let missing = urls.filter { $0.isFileURL && !existing.contains($0.path) }
+      if !missing.isEmpty && results.allSatisfy({ ($0["files"] as? [String]) == nil }) {
+        // Replace empty file slots with a single aggregated entry when needed.
+        if results.count == 1, results[0]["files"] == nil {
+          results[0]["files"] = missing.map { $0.path }
+        } else if results.isEmpty {
+          results.append([
+            "plainText": nil,
+            "html": nil,
+            "rtfBytes": nil,
+            "markdown": nil,
+            "uri": nil,
+            "imageBytes": nil,
+            "imageMimeType": "image/png",
+            "files": missing.map { $0.path },
+            "fileCopyMode": "copy",
+            "colorValue": nil,
+            "customFormats": [String: FlutterStandardTypedData]()
+          ])
+        }
+      }
     }
 
     return results
@@ -342,6 +448,7 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     let hasUri = pb.hasURLs || lowerTypes.contains(Self.utiUrl)
     let hasImage = pb.hasImages || lowerTypes.contains(Self.utiPng) || lowerTypes.contains(Self.utiJpeg)
     let hasFiles = lowerTypes.contains(Self.utiFileUrl)
+      || (pb.hasURLs && (pb.urls?.contains(where: { $0.isFileURL }) ?? false))
     let hasColor = pb.hasColors
 
     if shouldDetectPatterns {
