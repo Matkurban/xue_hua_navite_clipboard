@@ -1,3 +1,8 @@
+## 1.0.6
+
+* Windows: full example UI driver verification (integration_test) — clear/text/chinese/sensitive/html/rtf/png/color/custom/files/metadata/listener all pass
+* test: switch example UI driver to `material_ui` (no deprecated flutter/material)
+* test: API parity smoke covers markdown and URI roundtrips on Windows
 ## 1.0.5
 
 * example: add ValueKeys, Chinese/Files write actions for UI automation
