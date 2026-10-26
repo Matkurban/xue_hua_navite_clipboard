@@ -46,6 +46,7 @@ class XueHuaNaviteClipboardPlugin :
         private const val MIME_RTF = "text/rtf"
         private const val MIME_COLOR = "application/x-color"
         private const val MIME_FILE_COPY_MODE = "application/x-file-copy-mode"
+        private const val MIME_SHARED_FILE = "application/x-xuehua-file"
     }
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
@@ -229,11 +230,30 @@ class XueHuaNaviteClipboardPlugin :
             if (!files.isNullOrEmpty()) {
                 mimeTypes.add(ClipDescription.MIMETYPE_TEXT_URILIST)
                 mimeTypes.add(MIME_FILE_COPY_MODE)
+                mimeTypes.add(MIME_SHARED_FILE)
+                val shareDir = XueHuaClipboardContentProvider.getShareDir(ctx)
                 for (filePath in files) {
-                    val fileUri = if (filePath.startsWith("content://") || filePath.startsWith("file://")) {
-                        Uri.parse(filePath)
-                    } else {
-                        Uri.fromFile(File(filePath))
+                    // Android 7+ forbids exposing file:// via ClipData (FileUriExposedException).
+                    // Always share through our ContentProvider; keep the original path in text
+                    // so same-app readFiles can round-trip the caller-facing path.
+                    val fileUri: Uri = when {
+                        filePath.startsWith("content://") -> Uri.parse(filePath)
+                        else -> {
+                            val src = if (filePath.startsWith("file://")) {
+                                File(Uri.parse(filePath).path ?: filePath)
+                            } else {
+                                File(filePath)
+                            }
+                            val safeName = src.name.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                            val dest = File(shareDir, "clip_file_${System.currentTimeMillis()}_${index}_$safeName")
+                            if (src.exists() && src.isFile) {
+                                src.copyTo(dest, overwrite = true)
+                            } else {
+                                dest.writeBytes(ByteArray(0))
+                            }
+                            // Stable plugin mime so reads can distinguish shared files from custom blobs.
+                            XueHuaClipboardContentProvider.createUriForFile(ctx, dest, MIME_SHARED_FILE)
+                        }
                     }
                     clipItems.add(ClipData.Item(filePath, null, null, fileUri))
                 }
@@ -243,7 +263,7 @@ class XueHuaNaviteClipboardPlugin :
                 val shareDir = XueHuaClipboardContentProvider.getShareDir(ctx)
                 for ((k, v) in customFormats) {
                     val fmtName = k as? String ?: continue
-                    val fmtBytes = v as? ByteArray ?: continue
+                    val fmtBytes = coerceByteArray(v) ?: continue
                     val safeName = fmtName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
                     val customFile = File(shareDir, "clip_custom_${safeName}_$index.bin")
                     FileOutputStream(customFile).use { it.write(fmtBytes) }
@@ -329,7 +349,23 @@ class XueHuaNaviteClipboardPlugin :
                     uri.path?.let { collectedFiles.add(it) }
                 } else if (scheme == "content") {
                     val mime = ctx.contentResolver.getType(uri) ?: uri.getQueryParameter("mime") ?: ""
+                    val textLooksLikePath = !text.isNullOrBlank() && (
+                        text.startsWith("/") ||
+                            text.startsWith("file://") ||
+                            text.startsWith("content://")
+                        )
+                    val isSharedFile = mime == MIME_SHARED_FILE || (
+                        textLooksLikePath &&
+                            extras?.containsKey(MIME_FILE_COPY_MODE) == true &&
+                            !mime.startsWith("image/") &&
+                            mime != MIME_RTF &&
+                            mime != "application/rtf"
+                        )
                     when {
+                        isSharedFile -> {
+                            // Prefer caller-facing path stored in item text for same-app roundtrips.
+                            collectedFiles.add(text!!)
+                        }
                         mime.startsWith("image/") -> {
                             ctx.contentResolver.openInputStream(uri)?.use { input ->
                                 val rawBytes = input.readBytes()
@@ -505,4 +541,21 @@ class XueHuaNaviteClipboardPlugin :
         changeCounter.incrementAndGet()
         return true
     }
+
+    private fun coerceByteArray(value: Any?): ByteArray? {
+        return when (value) {
+            null -> null
+            is ByteArray -> value
+            is List<*> -> {
+                val out = ByteArray(value.size)
+                for (i in value.indices) {
+                    val n = value[i] as? Number ?: return null
+                    out[i] = n.toByte()
+                }
+                out
+            }
+            else -> null
+        }
+    }
 }
+
