@@ -1,3 +1,9 @@
+## 1.0.5
+
+* example: add ValueKeys, Chinese/Files write actions for UI automation
+* example: add integration_test UI driver covering clear/text/html/rtf/png/color/custom/files/listener
+* fix Linux CMake: set DOWNLOAD_EXTRACT_TIMESTAMP for googletest FetchContent
+
 ## 1.0.4
 
 * fix Windows: write CF_DIB alongside PNG so Paint/Office can paste images
