@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
+import 'temp_files.dart';
 
 void main() {
   runApp(const MyApp());
@@ -120,11 +121,13 @@ class _MyAppState extends State<MyApp> {
           title: const Text('Native Clipboard Inspector'),
           actions: <Widget>[
             IconButton(
+              key: const Key('btn_refresh'),
               icon: const Icon(Icons.refresh),
               tooltip: 'Refresh Metadata & Read',
               onPressed: _refreshClipboardInspection,
             ),
             IconButton(
+              key: const Key('btn_clear'),
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Clear Clipboard',
               onPressed: () async {
@@ -136,6 +139,7 @@ class _MyAppState extends State<MyApp> {
           ],
         ),
         body: ListView(
+          key: const Key('main_list'),
           padding: const EdgeInsets.all(16),
           children: <Widget>[
             Card(
@@ -156,12 +160,17 @@ class _MyAppState extends State<MyApp> {
                             ),
                           ),
                         ),
-                        Switch(value: isMonitoring, onChanged: _toggleMonitoring),
+                        Switch(
+                          key: const Key('switch_monitor'),
+                          value: isMonitoring,
+                          onChanged: _toggleMonitoring,
+                        ),
                       ],
                     ),
-                    Text('Status: $_statusLog'),
+                    Text(key: const Key('status_log'), 'Status: $_statusLog'),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<ClipboardBuffer>(
+                      key: const Key('dropdown_buffer'),
                       initialValue: _selectedBuffer,
                       decoration: const InputDecoration(
                         labelText: 'Target Clipboard Buffer',
@@ -193,16 +202,31 @@ class _MyAppState extends State<MyApp> {
               runSpacing: 8,
               children: <Widget>[
                 FilledButton.tonal(
+                  key: const Key('btn_write_text'),
                   onPressed: () async {
                     await _clipboard.writeText(
                       'Hello from XueHuaNaviteClipboard @ ${DateTime.now().toIso8601String()}',
                       options: ClipboardWriteOptions(buffer: _selectedBuffer),
                     );
+                    setState(() => _statusLog = 'Wrote plain text');
                     await _refreshClipboardInspection();
                   },
                   child: const Text('Write Plain Text'),
                 ),
                 FilledButton.tonal(
+                  key: const Key('btn_write_chinese'),
+                  onPressed: () async {
+                    await _clipboard.writeText(
+                      '雪花剪贴板测试 Hello 中文 🎉',
+                      options: ClipboardWriteOptions(buffer: _selectedBuffer),
+                    );
+                    setState(() => _statusLog = 'Wrote Chinese text');
+                    await _refreshClipboardInspection();
+                  },
+                  child: const Text('Write Chinese Text'),
+                ),
+                FilledButton.tonal(
+                  key: const Key('btn_write_sensitive'),
                   onPressed: () async {
                     await _clipboard.writeSensitiveText(
                       'SecretToken_${DateTime.now().millisecondsSinceEpoch}',
@@ -217,48 +241,57 @@ class _MyAppState extends State<MyApp> {
                   child: const Text('Write Sensitive Secret'),
                 ),
                 FilledButton.tonal(
+                  key: const Key('btn_write_html'),
                   onPressed: () async {
                     await _clipboard.writeHtml(
                       '<h3 style="color:#1E88E5;">Rich HTML Title</h3><p>With <b>bold</b> and <i>italic</i> content.</p>',
                       options: ClipboardWriteOptions(buffer: _selectedBuffer),
                     );
+                    setState(() => _statusLog = 'Wrote HTML');
                     await _refreshClipboardInspection();
                   },
                   child: const Text('Write HTML + Fallback'),
                 ),
                 FilledButton.tonal(
+                  key: const Key('btn_write_rtf'),
                   onPressed: () async {
                     await _clipboard.writeRtfString(
                       r'{\rtf1\ansi{\fonttbl\f0\fswiss Helvetica;}\f0\pard \b Rich Text Format (RTF)\b0\par}',
                       plainTextFallback: 'Rich Text Format (RTF)',
                       options: ClipboardWriteOptions(buffer: _selectedBuffer),
                     );
+                    setState(() => _statusLog = 'Wrote RTF');
                     await _refreshClipboardInspection();
                   },
                   child: const Text('Write RTF'),
                 ),
                 FilledButton.tonal(
+                  key: const Key('btn_write_png'),
                   onPressed: () async {
                     final pngBytes = await _generateSamplePng();
                     await _clipboard.writeImage(
                       pngBytes,
                       options: ClipboardWriteOptions(buffer: _selectedBuffer),
                     );
+                    setState(() => _statusLog = 'Wrote Generated PNG');
                     await _refreshClipboardInspection();
                   },
                   child: const Text('Write Generated PNG'),
                 ),
                 FilledButton.tonal(
+                  key: const Key('btn_write_color'),
                   onPressed: () async {
                     await _clipboard.writeColor(
                       0xFF673AB7,
                       options: ClipboardWriteOptions(buffer: _selectedBuffer),
                     );
+                    setState(() => _statusLog = 'Wrote Color');
                     await _refreshClipboardInspection();
                   },
                   child: const Text('Write Color (#FF673AB7)'),
                 ),
                 FilledButton.tonal(
+                  key: const Key('btn_write_custom'),
                   onPressed: () async {
                     final data = Uint8List.fromList(utf8.encode('{"customPayload":42}'));
                     await _clipboard.writeCustomData(
@@ -267,26 +300,44 @@ class _MyAppState extends State<MyApp> {
                       plainTextFallback: 'Custom Payload Fallback',
                       options: ClipboardWriteOptions(buffer: _selectedBuffer),
                     );
+                    setState(() => _statusLog = 'Wrote Custom Binary');
                     await _refreshClipboardInspection();
                   },
                   child: const Text('Write Custom Binary'),
                 ),
+                if (!kIsWeb)
+                  FilledButton.tonal(
+                    key: const Key('btn_write_files'),
+                    onPressed: () async {
+                      final paths = await createDemoClipboardFiles();
+                      await _clipboard.writeFiles(
+                        paths,
+                        options: ClipboardWriteOptions(buffer: _selectedBuffer),
+                      );
+                      setState(() => _statusLog = 'Wrote Files');
+                      await _refreshClipboardInspection();
+                    },
+                    child: const Text('Write Files'),
+                  ),
               ],
             ),
             const SizedBox(height: 16),
             if (_metadata != null)
               Card(
+                key: const Key('card_metadata'),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       Text(
+                        key: const Key('metadata_summary'),
                         'Metadata (changeCount: ${_metadata!.changeCount}, items: ${_metadata!.itemCount})',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 6),
                       Text(
+                        key: const Key('metadata_flags'),
                         'Flags: text=${_metadata!.hasPlainText}, html=${_metadata!.hasHtml}, '
                         'rtf=${_metadata!.hasRtf}, md=${_metadata!.hasMarkdown}, '
                         'uri=${_metadata!.hasUri}, image=${_metadata!.hasImage}, '
@@ -294,6 +345,7 @@ class _MyAppState extends State<MyApp> {
                       ),
                       const SizedBox(height: 4),
                       Text(
+                        key: const Key('metadata_formats'),
                         'Raw Formats: ${_metadata!.rawPlatformFormats.join(', ')}',
                         style: const TextStyle(fontSize: 12),
                       ),
@@ -304,6 +356,7 @@ class _MyAppState extends State<MyApp> {
             const SizedBox(height: 12),
             if (_currentItem != null)
               Card(
+                key: const Key('card_item'),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
@@ -315,16 +368,33 @@ class _MyAppState extends State<MyApp> {
                       ),
                       const SizedBox(height: 8),
                       if (_currentItem!.plainText != null)
-                        Text('PlainText: ${_currentItem!.plainText}'),
-                      if (_currentItem!.html != null) Text('HTML: ${_currentItem!.html}'),
-                      if (_currentItem!.rtfString != null) Text('RTF: ${_currentItem!.rtfString}'),
-                      if (_currentItem!.uri != null) Text('URI: ${_currentItem!.uri}'),
+                        Text(
+                          key: const Key('preview_plain'),
+                          'PlainText: ${_currentItem!.plainText}',
+                        ),
+                      if (_currentItem!.html != null)
+                        Text(
+                          key: const Key('preview_html'),
+                          'HTML: ${_currentItem!.html}',
+                        ),
+                      if (_currentItem!.rtfString != null)
+                        Text(
+                          key: const Key('preview_rtf'),
+                          'RTF: ${_currentItem!.rtfString}',
+                        ),
+                      if (_currentItem!.uri != null)
+                        Text(
+                          key: const Key('preview_uri'),
+                          'URI: ${_currentItem!.uri}',
+                        ),
                       if (_currentItem!.files != null && _currentItem!.files!.isNotEmpty)
                         Text(
+                          key: const Key('preview_files'),
                           'Files (${_currentItem!.fileCopyMode.wireName}): ${_currentItem!.files!.join(', ')}',
                         ),
                       if (_currentItem!.colorValue != null)
                         Row(
+                          key: const Key('preview_color'),
                           children: <Widget>[
                             const Text('Color: '),
                             Container(
@@ -341,6 +411,7 @@ class _MyAppState extends State<MyApp> {
                         ),
                       if (_currentItem!.customFormats.isNotEmpty)
                         Text(
+                          key: const Key('preview_custom'),
                           'Custom Formats: ${_currentItem!.customFormats.entries.map((e) => '${e.key} (${e.value.length} bytes)').join(', ')}',
                         ),
                       if (_currentItem!.imageBytes != null) ...<Widget>[
@@ -348,6 +419,7 @@ class _MyAppState extends State<MyApp> {
                         const Text('Image Preview (PNG):'),
                         const SizedBox(height: 4),
                         Image.memory(
+                          key: const Key('preview_image'),
                           _currentItem!.imageBytes!,
                           height: 100,
                           fit: BoxFit.contain,
