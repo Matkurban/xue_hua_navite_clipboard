@@ -1,3 +1,8 @@
+## 1.0.8
+
+* fix Android: writing file paths to the clipboard no longer uses `file://` URIs (FileUriExposedException on API 24+); serve via `FileProvider` / content URI with grant flags so cross-app paste works
+* test: Android emulator example UI driver on API 28/30/34/36 — clear/text/chinese/html/rtf/png/color/custom/files/monitor + API parity all pass
+
 ## 1.0.7
 
 * fix macOS: custom binary formats (MIME/UTI) were dropped after writeObjects — re-declare via addTypes/setData so readCustomData roundtrips
