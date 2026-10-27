@@ -1,3 +1,7 @@
+## 1.0.9
+
+* test(ios): 补全 example integration_test / test_driver，analyze 与四模拟器验收通过
+
 ## 1.0.8
 
 * fix Android: writing file paths to the clipboard no longer uses `file://` URIs (FileUriExposedException on API 24+); serve via `FileProvider` / content URI with grant flags so cross-app paste works
