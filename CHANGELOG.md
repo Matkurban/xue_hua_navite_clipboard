@@ -1,3 +1,10 @@
+## 1.1.0
+
+* refactor: replace `plugin_platform_interface` and manual `MethodChannel`/`EventChannel` plumbing with **Pigeon 30.0.4** across Dart, Android (Kotlin + JNI Native Interop), iOS/macOS (Swift + Objective-C FFI Native Interop), Windows (C++), and Linux (C++/GObject).
+* feat: redesign internal platform communication schema (`pigeons/clipboard_api.dart`) with strongly typed wire DTOs (`WireClipboardBufferTarget`, `WireClipboardItem`, `WireClipboardWriteOptions`, `WireClipboardReadOptions`, `WireClipboardMetadata`, `WireClipboardChangeEvent`) and on-demand `@FlutterApi()` change event lifecycle (`startClipboardListening` / `stopClipboardListening`).
+* refactor: replace `XueHuaNaviteClipboardPlatform` / `MethodChannelXueHuaNaviteClipboard` with internal `ClipboardBackend` and `PigeonClipboardBackend`, updating `XueHuaNaviteClipboardWeb` registration while preserving the full `XueHuaNaviteClipboard` public API and models unchanged.
+* test & build: verified `flutter analyze`, unit tests (Dart & Android), full builds across Android APK, iOS (`--no-codesign`), macOS, and Web, plus clean `clang++` (`-Wall -Wextra -Werror` on plugin sources, `-Wall -Werror` on generated bindings) verification for Windows and Linux.
+
 ## 1.0.9
 
 * test(ios): 补全 example integration_test / test_driver，analyze 与四模拟器验收通过

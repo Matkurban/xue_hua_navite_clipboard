@@ -3,6 +3,7 @@
 *.log
 *.pyc
 *.swp
+*.o
 .DS_Store
 .atom/
 .build/
@@ -31,3 +32,5 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+/pigeon/
+skills/system/

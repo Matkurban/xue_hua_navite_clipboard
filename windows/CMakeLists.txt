@@ -18,6 +18,8 @@ set(PLUGIN_NAME "xue_hua_navite_clipboard_plugin")
 
 # Any new source files that you add to the plugin should be added here.
 list(APPEND PLUGIN_SOURCES
+  "clipboard_api.g.cpp"
+  "clipboard_api.g.h"
   "xue_hua_navite_clipboard_plugin.cpp"
   "xue_hua_navite_clipboard_plugin.h"
 )

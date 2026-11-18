@@ -5,6 +5,7 @@ import 'dart:js_interop';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:web/web.dart' as web;
 
+import 'src/clipboard_backend.dart';
 import 'src/exceptions/clipboard_exception.dart';
 import 'src/models/clipboard_change_event.dart';
 import 'src/models/clipboard_format.dart';
@@ -12,15 +13,14 @@ import 'src/models/clipboard_item.dart';
 import 'src/models/clipboard_metadata.dart';
 import 'src/models/clipboard_read_options.dart';
 import 'src/models/clipboard_write_options.dart';
-import 'xue_hua_navite_clipboard_platform_interface.dart';
 
-/// A web implementation of the XueHuaNaviteClipboardPlatform of the XueHuaNaviteClipboard plugin.
-class XueHuaNaviteClipboardWeb extends XueHuaNaviteClipboardPlatform {
+/// A web implementation of [ClipboardBackend].
+class XueHuaNaviteClipboardWeb implements ClipboardBackend {
   /// Constructs a XueHuaNaviteClipboardWeb
   XueHuaNaviteClipboardWeb();
 
   static void registerWith(Registrar registrar) {
-    XueHuaNaviteClipboardPlatform.instance = XueHuaNaviteClipboardWeb();
+    ClipboardBackend.instance = XueHuaNaviteClipboardWeb();
   }
 
   int _changeCount = 0;

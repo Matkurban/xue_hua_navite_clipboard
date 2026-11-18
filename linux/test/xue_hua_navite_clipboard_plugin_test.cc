@@ -2,6 +2,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "clipboard_api.g.h"
 #include "include/xue_hua_navite_clipboard/xue_hua_navite_clipboard_plugin.h"
 #include "xue_hua_navite_clipboard_plugin_private.h"
 
@@ -11,6 +12,12 @@ namespace test {
 TEST(XueHuaNaviteClipboardPlugin, PluginTypeRegistered) {
   GType type = xue_hua_navite_clipboard_plugin_get_type();
   EXPECT_NE(type, G_TYPE_INVALID);
+
+  g_autoptr(ClipboardWireClipboardBufferTarget) target =
+      clipboard_wire_clipboard_buffer_target_new(
+          XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL, nullptr);
+  EXPECT_EQ(clipboard_wire_clipboard_buffer_target_get_buffer(target),
+            XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL);
 }
 
 }  // namespace test

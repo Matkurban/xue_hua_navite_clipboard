@@ -2,8 +2,8 @@ import Flutter
 import UIKit
 import UniformTypeIdentifiers
 
-public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
-  private var eventSink: FlutterEventSink?
+public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, ClipboardHostApi {
+  private var registrar: FlutterPluginRegistrar?
   private var pasteboardChangedObserver: NSObjectProtocol?
   private var appActiveObserver: NSObjectProtocol?
   private var lastObservedChangeCount: Int = UIPasteboard.general.changeCount
@@ -20,38 +20,25 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
   private static let utiTransient = "org.nspasteboard.TransientType"
 
   public static func register(with registrar: FlutterPluginRegistrar) {
-    let methodChannel = FlutterMethodChannel(
-      name: "xue_hua_navite_clipboard",
-      binaryMessenger: registrar.messenger()
-    )
-    let eventChannel = FlutterEventChannel(
-      name: "xue_hua_navite_clipboard/events",
-      binaryMessenger: registrar.messenger()
-    )
     let instance = XueHuaNaviteClipboardPlugin()
-    registrar.addMethodCallDelegate(instance, channel: methodChannel)
-    eventChannel.setStreamHandler(instance)
+    instance.registrar = registrar
+    registrar.publish(instance)
+    ClipboardHostApiSetup.register(api: instance, registrar: registrar)
+  }
+
+  public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    try? stopClipboardListening()
+    ClipboardHostApiSetup.unregister(api: self, registrar: registrar)
+    self.registrar = nil
   }
 
   deinit {
-    stopListening()
+    stopListeningInternal()
   }
 
-  // MARK: - FlutterStreamHandler (Lazy on-demand listener)
+  // MARK: - Listening
 
-  public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-    self.eventSink = events
-    startListening()
-    return nil
-  }
-
-  public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    stopListening()
-    self.eventSink = nil
-    return nil
-  }
-
-  private func startListening() {
+  func startClipboardListening() throws {
     guard pasteboardChangedObserver == nil else { return }
     lastObservedChangeCount = UIPasteboard.general.changeCount
 
@@ -72,7 +59,11 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     }
   }
 
-  private func stopListening() {
+  func stopClipboardListening() throws {
+    stopListeningInternal()
+  }
+
+  private func stopListeningInternal() {
     if let obs = pasteboardChangedObserver {
       NotificationCenter.default.removeObserver(obs)
       pasteboardChangedObserver = nil
@@ -88,102 +79,74 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     if current != lastObservedChangeCount {
       lastObservedChangeCount = current
       let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-      eventSink?([
-        "buffer": "general",
-        "changeCount": current,
-        "timestampMs": nowMs
-      ])
+      guard let registrar = self.registrar,
+            let flutterApi = ClipboardFlutterApiRegistrar.getInstance(registrar: registrar) else {
+        return
+      }
+      try? flutterApi.onClipboardChanged(
+        event: WireClipboardChangeEvent(
+          buffer: .general,
+          changeCount: Int64(current),
+          timestampMs: nowMs
+        )
+      )
     }
   }
 
   // MARK: - Pasteboard Resolution
 
-  private func resolvePasteboard(buffer: String?, customName: String?) -> UIPasteboard {
-    if buffer == "named", let name = customName, !name.isEmpty {
+  private func resolvePasteboard(buffer: WireClipboardBuffer, customName: String?) -> UIPasteboard {
+    if buffer == .named, let name = customName, !name.isEmpty {
       return UIPasteboard(name: UIPasteboard.Name(name), create: true) ?? .general
     }
     return .general
   }
 
-  // MARK: - MethodCall Handler
+  // MARK: - ClipboardHostApi
 
-  public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    let args = call.arguments as? [String: Any]
-    switch call.method {
-    case "writeItems":
-      result(handleWriteItems(args: args))
-    case "readItems":
-      result(handleReadItems(args: args))
-    case "getMetadata":
-      handleGetMetadata(args: args, result: result)
-    case "getChangeCount":
-      let pb = resolvePasteboard(
-        buffer: args?["buffer"] as? String,
-        customName: args?["customBufferName"] as? String
-      )
-      result(pb.changeCount)
-    case "clear":
-      let pb = resolvePasteboard(
-        buffer: args?["buffer"] as? String,
-        customName: args?["customBufferName"] as? String
-      )
-      pb.items = []
-      result(true)
-    case "setPollingInterval":
-      result(nil)
-    default:
-      result(FlutterMethodNotImplemented)
-    }
-  }
-
-  private func handleWriteItems(args: [String: Any]?) -> Bool {
-    guard let rawItems = args?["items"] as? [[String: Any]], !rawItems.isEmpty else {
+  func writeItems(items: [WireClipboardItem], options: WireClipboardWriteOptions) throws -> Bool {
+    guard !items.isEmpty else {
       return false
     }
-    let options = args?["options"] as? [String: Any]
-    let pb = resolvePasteboard(
-      buffer: options?["buffer"] as? String,
-      customName: options?["customBufferName"] as? String
-    )
-    let isSensitive = options?["isSensitive"] as? Bool ?? false
-    let isTransient = options?["isTransient"] as? Bool ?? false
-    let localOnly = options?["localOnly"] as? Bool ?? false
-    let expirationMs = options?["expirationMs"] as? Int
+
+    let pb = resolvePasteboard(buffer: options.buffer, customName: options.customBufferName)
+    let isSensitive = options.isSensitive
+    let isTransient = options.isTransient
+    let localOnly = options.localOnly
+    let expirationMs = options.expirationMs
 
     var pbItems: [[String: Any]] = []
 
-    for item in rawItems {
+    for item in items {
       var dict: [String: Any] = [:]
 
-      if let plainText = item["plainText"] as? String {
+      if let plainText = item.plainText {
         dict[Self.utiPlainText] = plainText
       }
-      if let html = item["html"] as? String, let data = html.data(using: .utf8) {
+      if let html = item.html, let data = html.data(using: .utf8) {
         dict[Self.utiHtml] = data
       }
-      if let rtfTyped = item["rtfBytes"] as? FlutterStandardTypedData {
-        dict[Self.utiRtf] = rtfTyped.data
+      if let rtfBytes = item.rtfBytes {
+        dict[Self.utiRtf] = Data(rtfBytes)
       }
-      if let markdown = item["markdown"] as? String, let data = markdown.data(using: .utf8) {
+      if let markdown = item.markdown, let data = markdown.data(using: .utf8) {
         dict[Self.utiMarkdown] = data
         if dict[Self.utiPlainText] == nil {
           dict[Self.utiPlainText] = markdown
         }
       }
-      if let uriStr = item["uri"] as? String, let url = URL(string: uriStr) {
+      if let uriStr = item.uri, let url = URL(string: uriStr) {
         dict[Self.utiUrl] = url
       }
-      if let imgTyped = item["imageBytes"] as? FlutterStandardTypedData {
-        if let image = UIImage(data: imgTyped.data), let pngData = image.pngData() {
+      if let imageBytes = item.imageBytes {
+        let rawData = Data(imageBytes)
+        if let image = UIImage(data: rawData), let pngData = image.pngData() {
           dict[Self.utiPng] = pngData
         } else {
-          dict[Self.utiPng] = imgTyped.data
+          dict[Self.utiPng] = rawData
         }
       }
-      // UIPasteboard represents multiple files as multiple items; keep the
-      // first URL on this item and emit extra items for the rest so readFiles
-      // (which aggregates across items) returns the full list.
-      if let files = item["files"] as? [String], !files.isEmpty {
+      if let files = item.files, !files.isEmpty {
         for (idx, filePath) in files.enumerated() {
           let fileUrl = URL(fileURLWithPath: filePath)
           if idx == 0 {
@@ -193,25 +156,16 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
           }
         }
       }
-      if let colorValue = item["colorValue"] as? Int {
+      if let colorValue = item.colorValue {
         let a = CGFloat((colorValue >> 24) & 0xFF) / 255.0
         let r = CGFloat((colorValue >> 16) & 0xFF) / 255.0
         let g = CGFloat((colorValue >> 8) & 0xFF) / 255.0
         let b = CGFloat(colorValue & 0xFF) / 255.0
         dict["com.apple.uikit.color"] = UIColor(red: r, green: g, blue: b, alpha: a)
       }
-      // Flutter nested maps arrive as [AnyHashable: Any]; a direct cast to
-      // [String: FlutterStandardTypedData] silently fails and drops custom data.
-      if let customFormats = item["customFormats"] as? [AnyHashable: Any] {
-        for (rawKey, rawValue) in customFormats {
-          guard let fmtKey = rawKey as? String else { continue }
-          if let typed = rawValue as? FlutterStandardTypedData {
-            dict[fmtKey] = typed.data
-          } else if let rawData = rawValue as? Data {
-            dict[fmtKey] = rawData
-          } else if let bytes = rawValue as? [UInt8] {
-            dict[fmtKey] = Data(bytes)
-          }
+      if let customFormats = item.customFormats {
+        for entry in customFormats {
+          dict[entry.format] = Data(entry.data)
         }
       }
       if isSensitive {
@@ -236,18 +190,17 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
 
     pb.setItems(pbItems, options: pbOptions)
 
-    // Reinforce file URLs via the dedicated API — more reliable on iOS than
-    // public.file-url dictionary entries alone for multi-file readback.
     var allFileUrls: [URL] = []
-    for item in rawItems {
-      if let files = item["files"] as? [String] {
+    for item in items {
+      if let files = item.files {
         allFileUrls.append(contentsOf: files.map { URL(fileURLWithPath: $0) })
       }
     }
     if !allFileUrls.isEmpty {
-      // If the pasteboard only contains files, prefer urls setter.
       let onlyFiles = pbItems.allSatisfy { dict in
-        Set(dict.keys.map { "\($0)" }).subtracting([Self.utiFileUrl, Self.utiConcealed, Self.utiTransient]).isEmpty
+        Set(dict.keys.map { "\($0)" })
+          .subtracting([Self.utiFileUrl, Self.utiConcealed, Self.utiTransient])
+          .isEmpty
       }
       if onlyFiles {
         pb.urls = allFileUrls
@@ -257,13 +210,9 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     return true
   }
 
-  private func handleReadItems(args: [String: Any]?) -> [[String: Any?]] {
-    let options = args?["options"] as? [String: Any]
-    let pb = resolvePasteboard(
-      buffer: options?["buffer"] as? String,
-      customName: options?["customBufferName"] as? String
-    )
-    let requestedCustom = (options?["requestedCustomFormats"] as? [String]) ?? []
+  func readItems(options: WireClipboardReadOptions) throws -> [WireClipboardItem] {
+    let pb = resolvePasteboard(buffer: options.buffer, customName: options.customBufferName)
+    let requestedCustom = options.requestedCustomFormats
 
     let rawItems = pb.items
     if rawItems.isEmpty {
@@ -284,7 +233,6 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         if s.hasPrefix("file:"), let url = URL(string: s) {
           return url.path
         }
-        if s.hasPrefix("/") { return s }
         return s
       }
       if let d = value as? Data, let s = String(data: d, encoding: .utf8) {
@@ -296,11 +244,9 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
       return nil
     }
 
-    var results: [[String: Any?]] = []
+    var results: [WireClipboardItem] = []
 
     for itemDict in rawItems {
-      // Prefer per-item values. Avoid UIPasteboard.string/url/image which
-      // reflect only one "best" representation and leak across items.
       var plainText: String?
       if let textVal = itemDict[Self.utiPlainText] as? String {
         plainText = textVal
@@ -315,9 +261,9 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         html = htmlStr
       }
 
-      var rtfBytes: FlutterStandardTypedData?
+      var rtfBytes: [UInt8]?
       if let rtfData = itemDict[Self.utiRtf] as? Data {
-        rtfBytes = FlutterStandardTypedData(bytes: rtfData)
+        rtfBytes = [UInt8](rtfData)
       }
 
       var markdown: String?
@@ -334,96 +280,95 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         uriStr = urlStr
       }
 
-      var imageBytes: FlutterStandardTypedData?
+      var imageBytes: [UInt8]?
       if let pngData = itemDict[Self.utiPng] as? Data {
-        imageBytes = FlutterStandardTypedData(bytes: pngData)
+        imageBytes = [UInt8](pngData)
       } else if let uiImg = itemDict[Self.utiPng] as? UIImage, let pngData = uiImg.pngData() {
-        imageBytes = FlutterStandardTypedData(bytes: pngData)
+        imageBytes = [UInt8](pngData)
       } else if let jpegData = itemDict[Self.utiJpeg] as? Data,
                 let uiImg = UIImage(data: jpegData),
                 let pngData = uiImg.pngData() {
-        imageBytes = FlutterStandardTypedData(bytes: pngData)
+        imageBytes = [UInt8](pngData)
       }
 
       var files: [String] = []
-      // public.file-url may arrive as URL, String, or Data.
       if let path = extractFilePath(itemDict[Self.utiFileUrl]) {
         files.append(path)
       }
-      // Some iOS versions also expose file URLs under public.url.
       if files.isEmpty, let urlVal = itemDict[Self.utiUrl] as? URL, urlVal.isFileURL {
         files.append(urlVal.path)
       }
 
-      var colorValue: Int?
+      var colorValue: Int64?
       if let uiColor = itemDict["com.apple.uikit.color"] as? UIColor {
         var r: CGFloat = 0
         var g: CGFloat = 0
         var b: CGFloat = 0
         var a: CGFloat = 0
         if uiColor.getRed(&r, green: &g, blue: &b, alpha: &a) {
-          let ai = Int(round(a * 255)) & 0xFF
-          let ri = Int(round(r * 255)) & 0xFF
-          let gi = Int(round(g * 255)) & 0xFF
-          let bi = Int(round(b * 255)) & 0xFF
+          let ai = Int64(round(a * 255)) & 0xFF
+          let ri = Int64(round(r * 255)) & 0xFF
+          let gi = Int64(round(g * 255)) & 0xFF
+          let bi = Int64(round(b * 255)) & 0xFF
           colorValue = (ai << 24) | (ri << 16) | (gi << 8) | bi
         }
       }
 
-      var customMap: [String: FlutterStandardTypedData] = [:]
+      var customEntries: [WireCustomFormatEntry] = []
       for fmt in requestedCustom {
         if let rawData = itemDict[fmt] as? Data {
-          customMap[fmt] = FlutterStandardTypedData(bytes: rawData)
+          customEntries.append(WireCustomFormatEntry(format: fmt, data: [UInt8](rawData)))
         } else if let rawStr = itemDict[fmt] as? String, let data = rawStr.data(using: .utf8) {
-          customMap[fmt] = FlutterStandardTypedData(bytes: data)
+          customEntries.append(WireCustomFormatEntry(format: fmt, data: [UInt8](data)))
         } else if let typed = itemDict[fmt] as? FlutterStandardTypedData {
-          customMap[fmt] = typed
+          customEntries.append(WireCustomFormatEntry(format: fmt, data: [UInt8](typed.data)))
         }
       }
 
-      // If this item is file-only, do not surface the file URL as plainText/uri.
       if !files.isEmpty {
         if let pt = plainText, pt.hasPrefix("file:") { plainText = nil }
         if let u = uriStr, u.hasPrefix("file:") { uriStr = nil }
       }
 
-      results.append([
-        "plainText": plainText,
-        "html": html,
-        "rtfBytes": rtfBytes,
-        "markdown": markdown,
-        "uri": uriStr,
-        "imageBytes": imageBytes,
-        "imageMimeType": "image/png",
-        "files": files.isEmpty ? nil : files,
-        "fileCopyMode": "copy",
-        "colorValue": colorValue,
-        "customFormats": customMap
-      ])
+      results.append(
+        WireClipboardItem(
+          plainText: plainText,
+          html: html,
+          rtfBytes: rtfBytes,
+          markdown: markdown,
+          uri: uriStr,
+          imageBytes: imageBytes,
+          imageMimeType: "image/png",
+          files: files.isEmpty ? nil : files,
+          fileCopyMode: .copy,
+          colorValue: colorValue,
+          customFormats: customEntries.isEmpty ? nil : customEntries
+        )
+      )
     }
 
-    // Aggregate pasteboard-level URLs if per-item extraction missed them.
     if let urls = pb.urls, !urls.isEmpty {
-      let existing = Set(results.compactMap { $0["files"] as? [String] }.flatMap { $0 })
+      let existing = Set(results.compactMap { $0.files }.flatMap { $0 })
       let missing = urls.filter { $0.isFileURL && !existing.contains($0.path) }
-      if !missing.isEmpty && results.allSatisfy({ ($0["files"] as? [String]) == nil }) {
-        // Replace empty file slots with a single aggregated entry when needed.
-        if results.count == 1, results[0]["files"] == nil {
-          results[0]["files"] = missing.map { $0.path }
+      if !missing.isEmpty && results.allSatisfy({ $0.files == nil }) {
+        if results.count == 1, results[0].files == nil {
+          results[0].files = missing.map { $0.path }
         } else if results.isEmpty {
-          results.append([
-            "plainText": nil,
-            "html": nil,
-            "rtfBytes": nil,
-            "markdown": nil,
-            "uri": nil,
-            "imageBytes": nil,
-            "imageMimeType": "image/png",
-            "files": missing.map { $0.path },
-            "fileCopyMode": "copy",
-            "colorValue": nil,
-            "customFormats": [String: FlutterStandardTypedData]()
-          ])
+          results.append(
+            WireClipboardItem(
+              plainText: nil,
+              html: nil,
+              rtfBytes: nil,
+              markdown: nil,
+              uri: nil,
+              imageBytes: nil,
+              imageMimeType: "image/png",
+              files: missing.map { $0.path },
+              fileCopyMode: .copy,
+              colorValue: nil,
+              customFormats: nil
+            )
+          )
         }
       }
     }
@@ -431,12 +376,11 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
     return results
   }
 
-  private func handleGetMetadata(args: [String: Any]?, result: @escaping FlutterResult) {
-    let pb = resolvePasteboard(
-      buffer: args?["buffer"] as? String,
-      customName: args?["customBufferName"] as? String
-    )
-    let shouldDetectPatterns = args?["detectPatterns"] as? Bool ?? false
+  func getMetadata(
+    target: WireClipboardBufferTarget,
+    detectPatterns: Bool
+  ) async throws -> WireClipboardMetadata {
+    let pb = resolvePasteboard(buffer: target.buffer, customName: target.customBufferName)
 
     let allTypes = pb.types
     let lowerTypes = Set(allTypes.map { $0.lowercased() })
@@ -451,7 +395,7 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
       || (pb.hasURLs && (pb.urls?.contains(where: { $0.isFileURL }) ?? false))
     let hasColor = pb.hasColors
 
-    if shouldDetectPatterns {
+    if detectPatterns {
       let probableWebURL: PartialKeyPath<UIPasteboard.DetectedValues> = \.probableWebURL
       let probableWebSearch: PartialKeyPath<UIPasteboard.DetectedValues> = \.probableWebSearch
       let number: PartialKeyPath<UIPasteboard.DetectedValues> = \.number
@@ -473,54 +417,70 @@ public class XueHuaNaviteClipboardPlugin: NSObject, FlutterPlugin, FlutterStream
         moneyAmounts
       ]
 
-      pb.detectPatterns(for: patternsToCheck) { [weak pb] detectResult in
-        var detected: [String] = []
-        if case .success(let found) = detectResult {
-          if found.contains(probableWebURL) { detected.append("probableWebUrl") }
-          if found.contains(probableWebSearch) { detected.append("probableWebSearch") }
-          if found.contains(number) { detected.append("number") }
-          if found.contains(emailAddresses) { detected.append("emailAddress") }
-          if found.contains(phoneNumbers) { detected.append("phoneNumber") }
-          if found.contains(postalAddresses) { detected.append("postalAddress") }
-          if found.contains(flightNumbers) { detected.append("flightNumber") }
-          if found.contains(shipmentTrackingNumbers) { detected.append("shipmentTrackingNumber") }
-          if found.contains(moneyAmounts) { detected.append("moneyAmount") }
-        }
-        DispatchQueue.main.async {
-          result([
-            "changeCount": pb?.changeCount ?? 0,
-            "timestampMs": nil,
-            "itemCount": pb?.numberOfItems ?? 0,
-            "hasPlainText": hasPlainText,
-            "hasHtml": hasHtml,
-            "hasRtf": hasRtf,
-            "hasMarkdown": hasMarkdown,
-            "hasUri": hasUri,
-            "hasImage": hasImage,
-            "hasFiles": hasFiles,
-            "hasColor": hasColor,
-            "rawPlatformFormats": allTypes,
-            "detectedPatterns": detected
-          ])
+      return await withCheckedContinuation { continuation in
+        pb.detectPatterns(for: patternsToCheck) { [weak pb] detectResult in
+          var detected: [WireClipboardDetectedPattern] = []
+          if case .success(let found) = detectResult {
+            if found.contains(probableWebURL) { detected.append(.probableWebUrl) }
+            if found.contains(probableWebSearch) { detected.append(.probableWebSearch) }
+            if found.contains(number) { detected.append(.number) }
+            if found.contains(emailAddresses) { detected.append(.emailAddress) }
+            if found.contains(phoneNumbers) { detected.append(.phoneNumber) }
+            if found.contains(postalAddresses) { detected.append(.postalAddress) }
+            if found.contains(flightNumbers) { detected.append(.flightNumber) }
+            if found.contains(shipmentTrackingNumbers) { detected.append(.shipmentTrackingNumber) }
+            if found.contains(moneyAmounts) { detected.append(.moneyAmount) }
+          }
+          continuation.resume(
+            returning: WireClipboardMetadata(
+              changeCount: Int64(pb?.changeCount ?? 0),
+              timestampMs: nil,
+              itemCount: Int64(pb?.numberOfItems ?? 0),
+              hasPlainText: hasPlainText,
+              hasHtml: hasHtml,
+              hasRtf: hasRtf,
+              hasMarkdown: hasMarkdown,
+              hasUri: hasUri,
+              hasImage: hasImage,
+              hasFiles: hasFiles,
+              hasColor: hasColor,
+              rawPlatformFormats: allTypes,
+              detectedPatterns: detected
+            )
+          )
         }
       }
-      return
     }
 
-    result([
-      "changeCount": pb.changeCount,
-      "timestampMs": nil,
-      "itemCount": pb.numberOfItems,
-      "hasPlainText": hasPlainText,
-      "hasHtml": hasHtml,
-      "hasRtf": hasRtf,
-      "hasMarkdown": hasMarkdown,
-      "hasUri": hasUri,
-      "hasImage": hasImage,
-      "hasFiles": hasFiles,
-      "hasColor": hasColor,
-      "rawPlatformFormats": allTypes,
-      "detectedPatterns": [String]()
-    ])
+    return WireClipboardMetadata(
+      changeCount: Int64(pb.changeCount),
+      timestampMs: nil,
+      itemCount: Int64(pb.numberOfItems),
+      hasPlainText: hasPlainText,
+      hasHtml: hasHtml,
+      hasRtf: hasRtf,
+      hasMarkdown: hasMarkdown,
+      hasUri: hasUri,
+      hasImage: hasImage,
+      hasFiles: hasFiles,
+      hasColor: hasColor,
+      rawPlatformFormats: allTypes,
+      detectedPatterns: []
+    )
+  }
+
+  func getChangeCount(target: WireClipboardBufferTarget) throws -> Int64 {
+    let pb = resolvePasteboard(buffer: target.buffer, customName: target.customBufferName)
+    return Int64(pb.changeCount)
+  }
+
+  func clear(target: WireClipboardBufferTarget) throws -> Bool {
+    let pb = resolvePasteboard(buffer: target.buffer, customName: target.customBufferName)
+    pb.items = []
+    return true
+  }
+
+  func setPollingInterval(intervalMs: Int64) throws {
+    // iOS uses UIPasteboard.changedNotification and didBecomeActiveNotification.
   }
 }

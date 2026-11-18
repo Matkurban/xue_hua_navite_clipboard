@@ -1,19 +1,29 @@
 package com.kurban.xue_hua_navite_clipboard
 
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
-import org.mockito.Mockito
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 internal class XueHuaNaviteClipboardPluginTest {
     @Test
-    fun onMethodCall_getChangeCount_returnsZeroInitially() {
+    fun getChangeCount_returnsZeroWhenNotAttached() {
         val plugin = XueHuaNaviteClipboardPlugin()
+        val target = WireClipboardBufferTarget(buffer = WireClipboardBuffer.GENERAL)
 
-        val call = MethodCall("getChangeCount", null)
-        val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
-        plugin.onMethodCall(call, mockResult)
+        assertEquals(0L, plugin.getChangeCount(target))
+    }
 
-        Mockito.verify(mockResult).success(0)
+    @Test
+    fun clear_returnsFalseWhenNotAttached() {
+        val plugin = XueHuaNaviteClipboardPlugin()
+        val target = WireClipboardBufferTarget(buffer = WireClipboardBuffer.GENERAL)
+
+        assertFalse(plugin.clear(target))
+    }
+
+    @Test
+    fun setPollingInterval_acceptsCustomIntervalWithoutContext() {
+        val plugin = XueHuaNaviteClipboardPlugin()
+        plugin.setPollingInterval(250L)
     }
 }

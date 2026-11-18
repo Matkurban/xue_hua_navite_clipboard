@@ -7,11 +7,7 @@
 #include <objidl.h>
 #include <gdiplus.h>
 
-#include <flutter/event_channel.h>
-#include <flutter/event_stream_handler_functions.h>
-#include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
-#include <flutter/standard_method_codec.h>
 
 #include <algorithm>
 #include <chrono>
@@ -31,7 +27,7 @@ std::wstring Utf8ToWide(const std::string& utf8) {
   int count = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
                                   static_cast<int>(utf8.size()), nullptr, 0);
   if (count <= 0) return std::wstring();
-  std::wstring wide(count, L'\0');
+  std::wstring wide(static_cast<size_t>(count), L'\0');
   MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()),
                       wide.data(), count);
   return wide;
@@ -43,7 +39,7 @@ std::string WideToUtf8(const std::wstring& wide) {
                                   static_cast<int>(wide.size()), nullptr, 0,
                                   nullptr, nullptr);
   if (count <= 0) return std::string();
-  std::string utf8(count, '\0');
+  std::string utf8(static_cast<size_t>(count), '\0');
   WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
                       utf8.data(), count, nullptr, nullptr);
   return utf8;
@@ -237,7 +233,10 @@ HGLOBAL ConvertPngToDib(const uint8_t* png_data, size_t png_size) {
                   for (UINT y = 0; y < height; ++y) {
                     std::memcpy(
                         dest + y * row_bytes,
-                        src + static_cast<size_t>(y) * static_cast<size_t>(data.Stride < 0 ? -data.Stride : data.Stride),
+                        src + static_cast<size_t>(y) *
+                                  static_cast<size_t>(
+                                      data.Stride < 0 ? -data.Stride
+                                                      : data.Stride),
                         static_cast<size_t>(width) * 4u);
                   }
                   GlobalUnlock(hdib);
@@ -354,9 +353,9 @@ std::vector<uint8_t> ConvertHBitmapToPng(HBITMAP hbmp) {
     return png_bytes;
   }
 
-  std::vector<uint8_t> pixels(static_cast<const uint8_t*>(section_bits),
-                              static_cast<const uint8_t*>(section_bits) +
-                                  pixel_bytes);
+  std::vector<uint8_t> pixels(
+      static_cast<const uint8_t*>(section_bits),
+      static_cast<const uint8_t*>(section_bits) + pixel_bytes);
   DeleteObject(section);
 
   Gdiplus::GdiplusStartupInput gdiplusStartupInput;
@@ -411,9 +410,9 @@ std::vector<uint8_t> ConvertDibToPng(HGLOBAL hdib) {
 
   // Copy out of clipboard memory before unlocking - GDI must not touch the
   // clipboard HGLOBAL after we return / unlock.
-  std::vector<uint8_t> dib_copy(static_cast<const uint8_t*>(dib_ptr),
-                                static_cast<const uint8_t*>(dib_ptr) +
-                                    total_size);
+  std::vector<uint8_t> dib_copy(
+      static_cast<const uint8_t*>(dib_ptr),
+      static_cast<const uint8_t*>(dib_ptr) + total_size);
   GlobalUnlock(hdib);
 
   auto* bih = reinterpret_cast<BITMAPINFOHEADER*>(dib_copy.data());
@@ -439,13 +438,10 @@ std::vector<uint8_t> ConvertDibToPng(HGLOBAL hdib) {
   HDC hdc = GetDC(nullptr);
   if (!hdc) return png_bytes;
 
-  // CreateDIBitmap is far more tolerant of clipboard DIB layouts than
-  // Gdiplus::Bitmap::FromBITMAPINFO (which AVs on many PrintScreen / Snip DIBs).
   HBITMAP hbmp =
       CreateDIBitmap(hdc, bih, CBM_INIT, bits, bmi, DIB_RGB_COLORS);
 
   if (!hbmp) {
-    // Fallback for synthesized / odd DIBs where CreateDIBitmap returns NULL.
     const int width = static_cast<int>(bih->biWidth);
     const int height = static_cast<int>(abs_h);
     HDC mem_dc = CreateCompatibleDC(hdc);
@@ -475,62 +471,28 @@ std::vector<uint8_t> ConvertDibToPng(HGLOBAL hdib) {
   DeleteObject(hbmp);
   return png_bytes;
 }
-const flutter::EncodableValue* GetMapValue(const flutter::EncodableMap& map,
-                                           const char* key) {
-  auto it = map.find(flutter::EncodableValue(key));
-  if (it == map.end() || it->second.IsNull()) return nullptr;
-  return &(it->second);
-}
 
 }  // namespace
 
 // static
 void XueHuaNaviteClipboardPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows *registrar) {
-  auto method_channel =
-      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-          registrar->messenger(), "xue_hua_navite_clipboard",
-          &flutter::StandardMethodCodec::GetInstance());
-
-  auto event_channel =
-      std::make_unique<flutter::EventChannel<flutter::EncodableValue>>(
-          registrar->messenger(), "xue_hua_navite_clipboard/events",
-          &flutter::StandardMethodCodec::GetInstance());
-
   auto plugin = std::make_unique<XueHuaNaviteClipboardPlugin>(registrar);
-  auto* plugin_pointer = plugin.get();
-
-  method_channel->SetMethodCallHandler(
-      [plugin_pointer](const auto &call, auto result) {
-        plugin_pointer->HandleMethodCall(call, std::move(result));
-      });
-
-  auto stream_handler = std::make_unique<
-      flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
-      [plugin_pointer](
-          const flutter::EncodableValue* arguments,
-          std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
-          -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
-        plugin_pointer->StartListening(std::move(events));
-        return nullptr;
-      },
-      [plugin_pointer](const flutter::EncodableValue* arguments)
-          -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
-        plugin_pointer->StopListening();
-        return nullptr;
-      });
-
-  event_channel->SetStreamHandler(std::move(stream_handler));
-
+  ClipboardHostApi::SetUp(registrar->messenger(), plugin.get());
   registrar->AddPlugin(std::move(plugin));
 }
 
 XueHuaNaviteClipboardPlugin::XueHuaNaviteClipboardPlugin(
     flutter::PluginRegistrarWindows *registrar)
-    : registrar_(registrar) {}
+    : registrar_(registrar) {
+  if (registrar_ && registrar_->messenger()) {
+    flutter_api_ =
+        std::make_unique<ClipboardFlutterApi>(registrar_->messenger());
+  }
+}
 
 XueHuaNaviteClipboardPlugin::~XueHuaNaviteClipboardPlugin() {
-  StopListening();
+  StopClipboardListening();
 }
 
 HWND XueHuaNaviteClipboardPlugin::GetTargetWindow() const {
@@ -544,21 +506,23 @@ HWND XueHuaNaviteClipboardPlugin::GetTargetWindow() const {
   return nullptr;
 }
 
-void XueHuaNaviteClipboardPlugin::StartListening(
-    std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events) {
-  StopListening();
-  event_sink_ = std::move(events);
+std::optional<FlutterError>
+XueHuaNaviteClipboardPlugin::StartClipboardListening() {
+  StopClipboardListening();
+  is_listening_ = true;
   last_sequence_number_ = GetClipboardSequenceNumber();
 
   HWND hwnd = GetTargetWindow();
-  if (!hwnd || !registrar_) return;
+  if (!hwnd || !registrar_) {
+    return std::nullopt;
+  }
 
   if (AddClipboardFormatListener(hwnd)) {
     listening_hwnd_ = hwnd;
     window_proc_id_ = registrar_->RegisterTopLevelWindowProcDelegate(
-        [this](HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-            -> std::optional<LRESULT> {
-          if (message == WM_CLIPBOARDUPDATE && event_sink_) {
+        [this](HWND /*hWnd*/, UINT message, WPARAM /*wParam*/,
+               LPARAM /*lParam*/) -> std::optional<LRESULT> {
+          if (message == WM_CLIPBOARDUPDATE && is_listening_ && flutter_api_) {
             DWORD seq = GetClipboardSequenceNumber();
             if (seq != last_sequence_number_) {
               last_sequence_number_ = seq;
@@ -566,23 +530,24 @@ void XueHuaNaviteClipboardPlugin::StartListening(
                   std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::system_clock::now().time_since_epoch())
                       .count();
-              flutter::EncodableMap payload = {
-                  {flutter::EncodableValue("buffer"),
-                   flutter::EncodableValue("general")},
-                  {flutter::EncodableValue("changeCount"),
-                   flutter::EncodableValue(static_cast<int64_t>(seq))},
-                  {flutter::EncodableValue("timestampMs"),
-                   flutter::EncodableValue(static_cast<int64_t>(now_ms))},
-              };
-              event_sink_->Success(flutter::EncodableValue(payload));
+              flutter_api_->OnClipboardChanged(
+                  WireClipboardChangeEvent(
+                      WireClipboardBuffer::kGeneral,
+                      static_cast<int64_t>(seq),
+                      static_cast<int64_t>(now_ms)),
+                  []() {},
+                  [](const FlutterError& /*error*/) {});
             }
           }
           return std::nullopt;
         });
   }
+  return std::nullopt;
 }
 
-void XueHuaNaviteClipboardPlugin::StopListening() {
+std::optional<FlutterError>
+XueHuaNaviteClipboardPlugin::StopClipboardListening() {
+  is_listening_ = false;
   if (window_proc_id_ != -1 && registrar_) {
     registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_id_);
     window_proc_id_ = -1;
@@ -591,598 +556,510 @@ void XueHuaNaviteClipboardPlugin::StopListening() {
     RemoveClipboardFormatListener(listening_hwnd_);
     listening_hwnd_ = nullptr;
   }
-  event_sink_.reset();
+  return std::nullopt;
 }
 
-void XueHuaNaviteClipboardPlugin::HandleMethodCall(
-    const flutter::MethodCall<flutter::EncodableValue> &method_call,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  const std::string& method = method_call.method_name();
-
-  if (method == "getChangeCount") {
-    DWORD seq = GetClipboardSequenceNumber();
-    result->Success(flutter::EncodableValue(static_cast<int64_t>(seq)));
-    return;
+ErrorOr<bool> XueHuaNaviteClipboardPlugin::WriteItems(
+    const ::flutter::EncodableList& items,
+    const WireClipboardWriteOptions& options) {
+  if (items.empty()) {
+    return false;
   }
 
-  if (method == "setPollingInterval") {
-    result->Success();
-    return;
+  const auto* custom_val = std::get_if<flutter::CustomEncodableValue>(&items[0]);
+  if (!custom_val || custom_val->type() != typeid(WireClipboardItem)) {
+    return false;
+  }
+  const auto& item = std::any_cast<const WireClipboardItem&>(*custom_val);
+
+  const bool is_sensitive = options.is_sensitive();
+  const bool is_transient = options.is_transient();
+  const bool local_only = options.local_only();
+
+  ScopedClipboard clip(GetTargetWindow());
+  if (!clip.IsOpen()) {
+    return FlutterError("CLIPBOARD_BUSY", "Failed to open Windows clipboard.");
+  }
+  EmptyClipboard();
+
+  // 1. Plain text
+  if (const std::string* plain_text = item.plain_text()) {
+    std::wstring wide = Utf8ToWide(*plain_text);
+    WriteGlobalBytes(CF_UNICODETEXT, wide.c_str(),
+                     (wide.size() + 1) * sizeof(wchar_t));
   }
 
-  if (method == "clear") {
-    ScopedClipboard clip(GetTargetWindow());
-    if (!clip.IsOpen()) {
-      result->Error("CLIPBOARD_BUSY", "Failed to open Windows clipboard.");
-      return;
+  // 2. HTML Format
+  if (const std::string* html = item.html()) {
+    UINT cf_html = RegisterClipboardFormatW(L"HTML Format");
+    if (cf_html != 0) {
+      std::string payload = BuildCfHtmlPayload(*html);
+      WriteGlobalBytes(cf_html, payload.c_str(), payload.size() + 1);
     }
-    EmptyClipboard();
-    result->Success(flutter::EncodableValue(true));
-    return;
   }
 
-  const auto* args_map =
-      std::get_if<flutter::EncodableMap>(method_call.arguments());
-
-  if (method == "writeItems") {
-    if (!args_map) {
-      result->Success(flutter::EncodableValue(false));
-      return;
+  // 3. Rich Text Format (RTF)
+  if (const std::vector<uint8_t>* rtf_bytes = item.rtf_bytes()) {
+    UINT cf_rtf = RegisterClipboardFormatW(L"Rich Text Format");
+    if (cf_rtf != 0 && !rtf_bytes->empty()) {
+      WriteGlobalBytes(cf_rtf, rtf_bytes->data(), rtf_bytes->size());
     }
-    const auto* items_val = GetMapValue(*args_map, "items");
-    const auto* items_list =
-        items_val ? std::get_if<flutter::EncodableList>(items_val) : nullptr;
-    if (!items_list || items_list->empty()) {
-      result->Success(flutter::EncodableValue(false));
-      return;
-    }
+  }
 
-    const auto* item_map =
-        std::get_if<flutter::EncodableMap>(&((*items_list)[0]));
-    if (!item_map) {
-      result->Success(flutter::EncodableValue(false));
-      return;
+  // 4. Markdown
+  if (const std::string* md = item.markdown()) {
+    UINT cf_md = RegisterClipboardFormatW(L"text/markdown");
+    if (cf_md != 0) {
+      WriteGlobalBytes(cf_md, md->c_str(), md->size() + 1);
     }
+  }
 
-    bool is_sensitive = false;
-    bool is_transient = false;
-    bool local_only = false;
-    if (const auto* opts_val = GetMapValue(*args_map, "options")) {
-      if (const auto* opts = std::get_if<flutter::EncodableMap>(opts_val)) {
-        if (const auto* v = GetMapValue(*opts, "isSensitive")) {
-          if (const auto* b = std::get_if<bool>(v)) is_sensitive = *b;
-        }
-        if (const auto* v = GetMapValue(*opts, "isTransient")) {
-          if (const auto* b = std::get_if<bool>(v)) is_transient = *b;
-        }
-        if (const auto* v = GetMapValue(*opts, "localOnly")) {
-          if (const auto* b = std::get_if<bool>(v)) local_only = *b;
+  // 5. URI / URL
+  if (const std::string* uri = item.uri()) {
+    UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
+    if (cf_url != 0) {
+      std::wstring wide_url = Utf8ToWide(*uri);
+      WriteGlobalBytes(cf_url, wide_url.c_str(),
+                       (wide_url.size() + 1) * sizeof(wchar_t));
+    }
+  }
+
+  // 6. Image (PNG + CF_DIB so Paint/Office/etc. can paste)
+  if (const std::vector<uint8_t>* img_bytes = item.image_bytes()) {
+    if (!img_bytes->empty()) {
+      UINT cf_png = RegisterClipboardFormatW(L"PNG");
+      if (cf_png != 0) {
+        WriteGlobalBytes(cf_png, img_bytes->data(), img_bytes->size());
+      }
+      UINT cf_mime_png = RegisterClipboardFormatW(L"image/png");
+      if (cf_mime_png != 0) {
+        WriteGlobalBytes(cf_mime_png, img_bytes->data(), img_bytes->size());
+      }
+      HGLOBAL hdib = ConvertPngToDib(img_bytes->data(), img_bytes->size());
+      if (hdib) {
+        if (!SetClipboardData(CF_DIB, hdib)) {
+          GlobalFree(hdib);
         }
       }
     }
+  }
 
-    ScopedClipboard clip(GetTargetWindow());
-    if (!clip.IsOpen()) {
-      result->Error("CLIPBOARD_BUSY", "Failed to open Windows clipboard.");
-      return;
-    }
-    EmptyClipboard();
-
-    // 1. Plain text
-    if (const auto* text_val = GetMapValue(*item_map, "plainText")) {
-      if (const auto* text_str = std::get_if<std::string>(text_val)) {
-        std::wstring wide = Utf8ToWide(*text_str);
-        WriteGlobalBytes(CF_UNICODETEXT, wide.c_str(),
-                         (wide.size() + 1) * sizeof(wchar_t));
-      }
-    }
-
-    // 2. HTML Format
-    if (const auto* html_val = GetMapValue(*item_map, "html")) {
-      if (const auto* html_str = std::get_if<std::string>(html_val)) {
-        UINT cf_html = RegisterClipboardFormatW(L"HTML Format");
-        if (cf_html != 0) {
-          std::string payload = BuildCfHtmlPayload(*html_str);
-          WriteGlobalBytes(cf_html, payload.c_str(), payload.size() + 1);
-        }
-      }
-    }
-
-    // 3. Rich Text Format (RTF)
-    if (const auto* rtf_val = GetMapValue(*item_map, "rtfBytes")) {
-      if (const auto* rtf_bytes = std::get_if<std::vector<uint8_t>>(rtf_val)) {
-        UINT cf_rtf = RegisterClipboardFormatW(L"Rich Text Format");
-        if (cf_rtf != 0 && !rtf_bytes->empty()) {
-          WriteGlobalBytes(cf_rtf, rtf_bytes->data(), rtf_bytes->size());
-        }
-      }
-    }
-
-    // 4. Markdown
-    if (const auto* md_val = GetMapValue(*item_map, "markdown")) {
-      if (const auto* md_str = std::get_if<std::string>(md_val)) {
-        UINT cf_md = RegisterClipboardFormatW(L"text/markdown");
-        if (cf_md != 0) {
-          WriteGlobalBytes(cf_md, md_str->c_str(), md_str->size() + 1);
-        }
-      }
-    }
-
-    // 5. URI / URL
-    if (const auto* uri_val = GetMapValue(*item_map, "uri")) {
-      if (const auto* uri_str = std::get_if<std::string>(uri_val)) {
-        UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
-        if (cf_url != 0) {
-          std::wstring wide_url = Utf8ToWide(*uri_str);
-          WriteGlobalBytes(cf_url, wide_url.c_str(),
-                           (wide_url.size() + 1) * sizeof(wchar_t));
-        }
-      }
-    }
-
-    // 6. Image (PNG + CF_DIB so Paint/Office/etc. can paste)
-    if (const auto* img_val = GetMapValue(*item_map, "imageBytes")) {
-      if (const auto* img_bytes = std::get_if<std::vector<uint8_t>>(img_val)) {
-        if (!img_bytes->empty()) {
-          UINT cf_png = RegisterClipboardFormatW(L"PNG");
-          if (cf_png != 0) {
-            WriteGlobalBytes(cf_png, img_bytes->data(), img_bytes->size());
-          }
-          UINT cf_mime_png = RegisterClipboardFormatW(L"image/png");
-          if (cf_mime_png != 0) {
-            WriteGlobalBytes(cf_mime_png, img_bytes->data(), img_bytes->size());
-          }
-          HGLOBAL hdib =
-              ConvertPngToDib(img_bytes->data(), img_bytes->size());
-          if (hdib) {
-            if (!SetClipboardData(CF_DIB, hdib)) {
-              GlobalFree(hdib);
-            }
-          }
-        }
-      }
-    }
-
-    // 7. Files (CF_HDROP + Preferred DropEffect)
-    if (const auto* files_val = GetMapValue(*item_map, "files")) {
-      if (const auto* files_list =
-              std::get_if<flutter::EncodableList>(files_val)) {
-        std::vector<wchar_t> multi_sz;
-        for (const auto& f : *files_list) {
-          if (const auto* path_str = std::get_if<std::string>(&f)) {
-            std::wstring wpath = Utf8ToWide(*path_str);
-            if (!wpath.empty()) {
-              multi_sz.insert(multi_sz.end(), wpath.begin(), wpath.end());
-              multi_sz.push_back(L'\0');
-            }
-          }
-        }
-        if (!multi_sz.empty()) {
+  // 7. Files (CF_HDROP + Preferred DropEffect)
+  if (const ::flutter::EncodableList* files_list = item.files()) {
+    std::vector<wchar_t> multi_sz;
+    for (const auto& f : *files_list) {
+      if (const auto* path_str = std::get_if<std::string>(&f)) {
+        std::wstring wpath = Utf8ToWide(*path_str);
+        if (!wpath.empty()) {
+          multi_sz.insert(multi_sz.end(), wpath.begin(), wpath.end());
           multi_sz.push_back(L'\0');
-          size_t total_size =
-              sizeof(DROPFILES) + multi_sz.size() * sizeof(wchar_t);
-          HGLOBAL hdrop = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, total_size);
-          if (hdrop) {
-            auto* df = static_cast<DROPFILES*>(GlobalLock(hdrop));
-            if (df) {
-              df->pFiles = sizeof(DROPFILES);
-              df->fWide = TRUE;
-              std::memcpy(reinterpret_cast<uint8_t*>(df) + sizeof(DROPFILES),
-                          multi_sz.data(), multi_sz.size() * sizeof(wchar_t));
-              GlobalUnlock(hdrop);
-              if (!SetClipboardData(CF_HDROP, hdrop)) {
-                GlobalFree(hdrop);
-              }
-            } else {
-              GlobalFree(hdrop);
-            }
-          }
-
-          DWORD drop_effect = DROPEFFECT_COPY;
-          if (const auto* mode_val = GetMapValue(*item_map, "fileCopyMode")) {
-            if (const auto* mode_str = std::get_if<std::string>(mode_val)) {
-              if (*mode_str == "cut") {
-                drop_effect = DROPEFFECT_MOVE;
-              }
-            }
-          }
-          WriteDwordFormat(L"Preferred DropEffect", drop_effect);
         }
       }
     }
-
-    // 8. Color
-    if (const auto* color_val = GetMapValue(*item_map, "colorValue")) {
-      int64_t color_int = 0;
-      if (const auto* i32 = std::get_if<int32_t>(color_val)) {
-        color_int = *i32;
-      } else if (const auto* i64 = std::get_if<int64_t>(color_val)) {
-        color_int = *i64;
-      }
-      UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
-      if (cf_color != 0) {
-        WriteGlobalBytes(cf_color, &color_int, sizeof(int64_t));
-      }
-    }
-
-    // 9. Custom Formats
-    if (const auto* custom_val = GetMapValue(*item_map, "customFormats")) {
-      if (const auto* custom_map =
-              std::get_if<flutter::EncodableMap>(custom_val)) {
-        for (const auto& kv : *custom_map) {
-          const auto* fmt_name = std::get_if<std::string>(&kv.first);
-          const auto* fmt_bytes = std::get_if<std::vector<uint8_t>>(&kv.second);
-          if (fmt_name && fmt_bytes && !fmt_name->empty()) {
-            UINT cf_custom =
-                RegisterClipboardFormatW(Utf8ToWide(*fmt_name).c_str());
-            if (cf_custom != 0) {
-              WriteGlobalBytes(cf_custom, fmt_bytes->data(), fmt_bytes->size());
-            }
-          }
-        }
-      }
-    }
-
-    // 10. Privacy & Cloud Clipboard Exclusion Flags (Windows 10/11)
-    if (is_sensitive) {
-      WriteDwordFormat(L"ExcludeClipboardContentFromMonitorProcessing", 0);
-      WriteDwordFormat(L"CanIncludeInClipboardHistory", 0);
-      WriteDwordFormat(L"CanUploadToCloudClipboard", 0);
-    } else {
-      if (is_transient) {
-        WriteDwordFormat(L"CanIncludeInClipboardHistory", 0);
-      }
-      if (local_only) {
-        WriteDwordFormat(L"CanUploadToCloudClipboard", 0);
-      }
-    }
-
-    result->Success(flutter::EncodableValue(true));
-    return;
-  }
-
-  if (method == "readItems") {
-    ScopedClipboard clip(GetTargetWindow());
-    if (!clip.IsOpen()) {
-      result->Error("CLIPBOARD_BUSY", "Failed to open Windows clipboard.");
-      return;
-    }
-
-    flutter::EncodableMap item;
-
-    // 1. Plain Text
-    if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
-      HANDLE hdata = GetClipboardData(CF_UNICODETEXT);
-      if (hdata) {
-        const wchar_t* wstr = static_cast<const wchar_t*>(GlobalLock(hdata));
-        if (wstr) {
-          item[flutter::EncodableValue("plainText")] =
-              flutter::EncodableValue(WideToUtf8(wstr));
-          GlobalUnlock(hdata);
-        }
-      }
-    }
-
-    // 2. HTML
-    UINT cf_html = RegisterClipboardFormatW(L"HTML Format");
-    if (cf_html != 0 && IsClipboardFormatAvailable(cf_html)) {
-      HANDLE hdata = GetClipboardData(cf_html);
-      if (hdata) {
-        const char* cstr = static_cast<const char*>(GlobalLock(hdata));
-        size_t sz = GlobalSize(hdata);
-        if (cstr && sz > 0) {
-          size_t len = strnlen(cstr, sz);
-          std::string raw_html(cstr, len);
-          item[flutter::EncodableValue("html")] =
-              flutter::EncodableValue(ParseCfHtmlPayload(raw_html));
-          GlobalUnlock(hdata);
-        }
-      }
-    }
-
-    // 3. RTF
-    UINT cf_rtf = RegisterClipboardFormatW(L"Rich Text Format");
-    if (cf_rtf != 0 && IsClipboardFormatAvailable(cf_rtf)) {
-      HANDLE hdata = GetClipboardData(cf_rtf);
-      if (hdata) {
-        const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
-        size_t sz = GlobalSize(hdata);
-        if (ptr && sz > 0) {
-          while (sz > 0 && ptr[sz - 1] == 0) --sz;
-          std::vector<uint8_t> rtf_vec(ptr, ptr + sz);
-          item[flutter::EncodableValue("rtfBytes")] =
-              flutter::EncodableValue(rtf_vec);
-          GlobalUnlock(hdata);
-        }
-      }
-    }
-
-    // 4. Markdown
-    UINT cf_md = RegisterClipboardFormatW(L"text/markdown");
-    if (cf_md != 0 && IsClipboardFormatAvailable(cf_md)) {
-      HANDLE hdata = GetClipboardData(cf_md);
-      if (hdata) {
-        const char* cstr = static_cast<const char*>(GlobalLock(hdata));
-        size_t sz = GlobalSize(hdata);
-        if (cstr && sz > 0) {
-          size_t len = strnlen(cstr, sz);
-          item[flutter::EncodableValue("markdown")] =
-              flutter::EncodableValue(std::string(cstr, len));
-          GlobalUnlock(hdata);
-        }
-      }
-    }
-
-    // 5. URI
-    UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
-    if (cf_url != 0 && IsClipboardFormatAvailable(cf_url)) {
-      HANDLE hdata = GetClipboardData(cf_url);
-      if (hdata) {
-        const wchar_t* wstr = static_cast<const wchar_t*>(GlobalLock(hdata));
-        if (wstr) {
-          item[flutter::EncodableValue("uri")] =
-              flutter::EncodableValue(WideToUtf8(wstr));
-          GlobalUnlock(hdata);
-        }
-      }
-    }
-
-    // 6. Image (Prefer PNG, then CF_BITMAP, then CF_DIB / CF_DIBV5)
-    UINT cf_png = RegisterClipboardFormatW(L"PNG");
-    UINT cf_mime_png = RegisterClipboardFormatW(L"image/png");
-    std::vector<uint8_t> image_bytes;
-    if (cf_png != 0 && IsClipboardFormatAvailable(cf_png)) {
-      HANDLE hdata = GetClipboardData(cf_png);
-      if (hdata) {
-        const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
-        size_t sz = GlobalSize(hdata);
-        if (ptr && sz > 0) {
-          sz = EffectivePngSize(ptr, sz);
-          image_bytes.assign(ptr, ptr + sz);
-        }
-        GlobalUnlock(hdata);
-      }
-    }
-    if (image_bytes.empty() && cf_mime_png != 0 &&
-        IsClipboardFormatAvailable(cf_mime_png)) {
-      HANDLE hdata = GetClipboardData(cf_mime_png);
-      if (hdata) {
-        const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
-        size_t sz = GlobalSize(hdata);
-        if (ptr && sz > 0) {
-          sz = EffectivePngSize(ptr, sz);
-          image_bytes.assign(ptr, ptr + sz);
-        }
-        GlobalUnlock(hdata);
-      }
-    }
-    // Prefer CF_BITMAP over synthesized CF_DIB: PrintScreen / snip often
-    // expose a DDB first; GetClipboardData(CF_DIB) synthesis can yield a DIB
-    // that CreateDIBitmap rejects, while the HBITMAP itself is fine.
-    if (image_bytes.empty() && IsClipboardFormatAvailable(CF_BITMAP)) {
-      // CF_BITMAP returns an HBITMAP, not an HGLOBAL - never GlobalLock it.
-      HANDLE hbm = GetClipboardData(CF_BITMAP);
-      if (hbm) {
-        image_bytes = ConvertHBitmapToPng(static_cast<HBITMAP>(hbm));
-      }
-    }
-    if (image_bytes.empty() && IsClipboardFormatAvailable(CF_DIB)) {
-      HANDLE hdib = GetClipboardData(CF_DIB);
-      if (hdib) {
-        image_bytes = ConvertDibToPng(hdib);
-      }
-    }
-    if (image_bytes.empty() && IsClipboardFormatAvailable(CF_DIBV5)) {
-      HANDLE hdib = GetClipboardData(CF_DIBV5);
-      if (hdib) {
-        image_bytes = ConvertDibToPng(hdib);
-      }
-    }
-
-    if (!image_bytes.empty()) {
-      item[flutter::EncodableValue("imageBytes")] =
-          flutter::EncodableValue(image_bytes);
-      item[flutter::EncodableValue("imageMimeType")] =
-          flutter::EncodableValue("image/png");
-    }
-
-    // 7. Files (CF_HDROP + Preferred DropEffect)
-    if (IsClipboardFormatAvailable(CF_HDROP)) {
-      HANDLE hdrop = GetClipboardData(CF_HDROP);
+    if (!multi_sz.empty()) {
+      multi_sz.push_back(L'\0');
+      size_t total_size =
+          sizeof(DROPFILES) + multi_sz.size() * sizeof(wchar_t);
+      HGLOBAL hdrop = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, total_size);
       if (hdrop) {
-        HDROP drop = static_cast<HDROP>(GlobalLock(hdrop));
-        if (drop) {
-          UINT file_count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-          flutter::EncodableList files;
-          for (UINT i = 0; i < file_count; ++i) {
-            UINT char_len = DragQueryFileW(drop, i, nullptr, 0);
-            if (char_len > 0) {
-              std::wstring wpath(char_len + 1, L'\0');
-              DragQueryFileW(drop, i, wpath.data(), char_len + 1);
-              wpath.resize(char_len);
-              files.push_back(flutter::EncodableValue(WideToUtf8(wpath)));
-            }
-          }
+        auto* df = static_cast<DROPFILES*>(GlobalLock(hdrop));
+        if (df) {
+          df->pFiles = sizeof(DROPFILES);
+          df->fWide = TRUE;
+          std::memcpy(reinterpret_cast<uint8_t*>(df) + sizeof(DROPFILES),
+                      multi_sz.data(), multi_sz.size() * sizeof(wchar_t));
           GlobalUnlock(hdrop);
-          if (!files.empty()) {
-            item[flutter::EncodableValue("files")] =
-                flutter::EncodableValue(files);
+          if (!SetClipboardData(CF_HDROP, hdrop)) {
+            GlobalFree(hdrop);
           }
+        } else {
+          GlobalFree(hdrop);
         }
       }
 
-      std::string copy_mode = "copy";
-      UINT cf_effect = RegisterClipboardFormatW(L"Preferred DropEffect");
-      if (cf_effect != 0 && IsClipboardFormatAvailable(cf_effect)) {
-        HANDLE heffect = GetClipboardData(cf_effect);
-        if (heffect && GlobalSize(heffect) >= sizeof(DWORD)) {
-          const DWORD* effect_ptr =
-              static_cast<const DWORD*>(GlobalLock(heffect));
-          if (effect_ptr) {
-            if ((*effect_ptr & DROPEFFECT_MOVE) != 0) {
-              copy_mode = "cut";
-            }
-            GlobalUnlock(heffect);
-          }
+      DWORD drop_effect =
+          item.file_copy_mode() == WireFileCopyMode::kCut ? DROPEFFECT_MOVE
+                                                          : DROPEFFECT_COPY;
+      WriteDwordFormat(L"Preferred DropEffect", drop_effect);
+    }
+  }
+
+  // 8. Color
+  if (const int64_t* color_val = item.color_value()) {
+    UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
+    if (cf_color != 0) {
+      WriteGlobalBytes(cf_color, color_val, sizeof(int64_t));
+    }
+  }
+
+  // 9. Custom Formats
+  if (const ::flutter::EncodableList* custom_list = item.custom_formats()) {
+    for (const auto& entry_val : *custom_list) {
+      const auto* entry_custom =
+          std::get_if<flutter::CustomEncodableValue>(&entry_val);
+      if (!entry_custom ||
+          entry_custom->type() != typeid(WireCustomFormatEntry)) {
+        continue;
+      }
+      const auto& entry =
+          std::any_cast<const WireCustomFormatEntry&>(*entry_custom);
+      if (!entry.format().empty()) {
+        UINT cf_custom =
+            RegisterClipboardFormatW(Utf8ToWide(entry.format()).c_str());
+        if (cf_custom != 0) {
+          WriteGlobalBytes(cf_custom, entry.data().data(), entry.data().size());
         }
       }
-      item[flutter::EncodableValue("fileCopyMode")] =
-          flutter::EncodableValue(copy_mode);
+    }
+  }
+
+  // 10. Privacy & Cloud Clipboard Exclusion Flags (Windows 10/11)
+  if (is_sensitive) {
+    WriteDwordFormat(L"ExcludeClipboardContentFromMonitorProcessing", 0);
+    WriteDwordFormat(L"CanIncludeInClipboardHistory", 0);
+    WriteDwordFormat(L"CanUploadToCloudClipboard", 0);
+  } else {
+    if (is_transient) {
+      WriteDwordFormat(L"CanIncludeInClipboardHistory", 0);
+    }
+    if (local_only) {
+      WriteDwordFormat(L"CanUploadToCloudClipboard", 0);
+    }
+  }
+
+  return true;
+}
+
+ErrorOr<::flutter::EncodableList> XueHuaNaviteClipboardPlugin::ReadItems(
+    const WireClipboardReadOptions& options) {
+  ScopedClipboard clip(GetTargetWindow());
+  if (!clip.IsOpen()) {
+    return FlutterError("CLIPBOARD_BUSY", "Failed to open Windows clipboard.");
+  }
+
+  WireClipboardItem item(WireFileCopyMode::kCopy);
+  bool has_any = false;
+
+  // 1. Plain Text
+  if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+    HANDLE hdata = GetClipboardData(CF_UNICODETEXT);
+    if (hdata) {
+      const wchar_t* wstr = static_cast<const wchar_t*>(GlobalLock(hdata));
+      if (wstr) {
+        item.set_plain_text(WideToUtf8(wstr));
+        has_any = true;
+        GlobalUnlock(hdata);
+      }
+    }
+  }
+
+  // 2. HTML
+  UINT cf_html = RegisterClipboardFormatW(L"HTML Format");
+  if (cf_html != 0 && IsClipboardFormatAvailable(cf_html)) {
+    HANDLE hdata = GetClipboardData(cf_html);
+    if (hdata) {
+      const char* cstr = static_cast<const char*>(GlobalLock(hdata));
+      size_t sz = GlobalSize(hdata);
+      if (cstr && sz > 0) {
+        size_t len = strnlen(cstr, sz);
+        std::string raw_html(cstr, len);
+        item.set_html(ParseCfHtmlPayload(raw_html));
+        has_any = true;
+        GlobalUnlock(hdata);
+      }
+    }
+  }
+
+  // 3. RTF
+  UINT cf_rtf = RegisterClipboardFormatW(L"Rich Text Format");
+  if (cf_rtf != 0 && IsClipboardFormatAvailable(cf_rtf)) {
+    HANDLE hdata = GetClipboardData(cf_rtf);
+    if (hdata) {
+      const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
+      size_t sz = GlobalSize(hdata);
+      if (ptr && sz > 0) {
+        while (sz > 0 && ptr[sz - 1] == 0) --sz;
+        item.set_rtf_bytes(std::vector<uint8_t>(ptr, ptr + sz));
+        has_any = true;
+        GlobalUnlock(hdata);
+      }
+    }
+  }
+
+  // 4. Markdown
+  UINT cf_md = RegisterClipboardFormatW(L"text/markdown");
+  if (cf_md != 0 && IsClipboardFormatAvailable(cf_md)) {
+    HANDLE hdata = GetClipboardData(cf_md);
+    if (hdata) {
+      const char* cstr = static_cast<const char*>(GlobalLock(hdata));
+      size_t sz = GlobalSize(hdata);
+      if (cstr && sz > 0) {
+        size_t len = strnlen(cstr, sz);
+        item.set_markdown(std::string(cstr, len));
+        has_any = true;
+        GlobalUnlock(hdata);
+      }
+    }
+  }
+
+  // 5. URI
+  UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
+  if (cf_url != 0 && IsClipboardFormatAvailable(cf_url)) {
+    HANDLE hdata = GetClipboardData(cf_url);
+    if (hdata) {
+      const wchar_t* wstr = static_cast<const wchar_t*>(GlobalLock(hdata));
+      if (wstr) {
+        item.set_uri(WideToUtf8(wstr));
+        has_any = true;
+        GlobalUnlock(hdata);
+      }
+    }
+  }
+
+  // 6. Image (Prefer PNG, then CF_BITMAP, then CF_DIB / CF_DIBV5)
+  UINT cf_png = RegisterClipboardFormatW(L"PNG");
+  UINT cf_mime_png = RegisterClipboardFormatW(L"image/png");
+  std::vector<uint8_t> image_bytes;
+  if (cf_png != 0 && IsClipboardFormatAvailable(cf_png)) {
+    HANDLE hdata = GetClipboardData(cf_png);
+    if (hdata) {
+      const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
+      size_t sz = GlobalSize(hdata);
+      if (ptr && sz > 0) {
+        sz = EffectivePngSize(ptr, sz);
+        image_bytes.assign(ptr, ptr + sz);
+      }
+      GlobalUnlock(hdata);
+    }
+  }
+  if (image_bytes.empty() && cf_mime_png != 0 &&
+      IsClipboardFormatAvailable(cf_mime_png)) {
+    HANDLE hdata = GetClipboardData(cf_mime_png);
+    if (hdata) {
+      const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
+      size_t sz = GlobalSize(hdata);
+      if (ptr && sz > 0) {
+        sz = EffectivePngSize(ptr, sz);
+        image_bytes.assign(ptr, ptr + sz);
+      }
+      GlobalUnlock(hdata);
+    }
+  }
+  if (image_bytes.empty() && IsClipboardFormatAvailable(CF_BITMAP)) {
+    HANDLE hbm = GetClipboardData(CF_BITMAP);
+    if (hbm) {
+      image_bytes = ConvertHBitmapToPng(static_cast<HBITMAP>(hbm));
+    }
+  }
+  if (image_bytes.empty() && IsClipboardFormatAvailable(CF_DIB)) {
+    HANDLE hdib = GetClipboardData(CF_DIB);
+    if (hdib) {
+      image_bytes = ConvertDibToPng(hdib);
+    }
+  }
+  if (image_bytes.empty() && IsClipboardFormatAvailable(CF_DIBV5)) {
+    HANDLE hdib = GetClipboardData(CF_DIBV5);
+    if (hdib) {
+      image_bytes = ConvertDibToPng(hdib);
+    }
+  }
+
+  if (!image_bytes.empty()) {
+    item.set_image_bytes(image_bytes);
+    item.set_image_mime_type("image/png");
+    has_any = true;
+  }
+
+  // 7. Files (CF_HDROP + Preferred DropEffect)
+  if (IsClipboardFormatAvailable(CF_HDROP)) {
+    HANDLE hdrop = GetClipboardData(CF_HDROP);
+    if (hdrop) {
+      HDROP drop = static_cast<HDROP>(GlobalLock(hdrop));
+      if (drop) {
+        UINT file_count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        ::flutter::EncodableList files;
+        for (UINT i = 0; i < file_count; ++i) {
+          UINT char_len = DragQueryFileW(drop, i, nullptr, 0);
+          if (char_len > 0) {
+            std::wstring wpath(static_cast<size_t>(char_len) + 1, L'\0');
+            DragQueryFileW(drop, i, wpath.data(), char_len + 1);
+            wpath.resize(char_len);
+            files.push_back(::flutter::EncodableValue(WideToUtf8(wpath)));
+          }
+        }
+        GlobalUnlock(hdrop);
+        if (!files.empty()) {
+          item.set_files(files);
+          has_any = true;
+        }
+      }
     }
 
-    // 8. Color
-    UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
-    if (cf_color != 0 && IsClipboardFormatAvailable(cf_color)) {
-      HANDLE hdata = GetClipboardData(cf_color);
-      if (hdata && GlobalSize(hdata) >= sizeof(int64_t)) {
-        const int64_t* cptr = static_cast<const int64_t*>(GlobalLock(hdata));
-        if (cptr) {
-          item[flutter::EncodableValue("colorValue")] =
-              flutter::EncodableValue(*cptr);
+    WireFileCopyMode copy_mode = WireFileCopyMode::kCopy;
+    UINT cf_effect = RegisterClipboardFormatW(L"Preferred DropEffect");
+    if (cf_effect != 0 && IsClipboardFormatAvailable(cf_effect)) {
+      HANDLE heffect = GetClipboardData(cf_effect);
+      if (heffect && GlobalSize(heffect) >= sizeof(DWORD)) {
+        const DWORD* effect_ptr =
+            static_cast<const DWORD*>(GlobalLock(heffect));
+        if (effect_ptr) {
+          if ((*effect_ptr & DROPEFFECT_MOVE) != 0) {
+            copy_mode = WireFileCopyMode::kCut;
+          }
+          GlobalUnlock(heffect);
+        }
+      }
+    }
+    item.set_file_copy_mode(copy_mode);
+  }
+
+  // 8. Color
+  UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
+  if (cf_color != 0 && IsClipboardFormatAvailable(cf_color)) {
+    HANDLE hdata = GetClipboardData(cf_color);
+    if (hdata && GlobalSize(hdata) >= sizeof(int64_t)) {
+      const int64_t* cptr = static_cast<const int64_t*>(GlobalLock(hdata));
+      if (cptr) {
+        item.set_color_value(*cptr);
+        has_any = true;
+        GlobalUnlock(hdata);
+      }
+    }
+  }
+
+  // 9. Requested Custom Formats
+  ::flutter::EncodableList custom_entries;
+  for (const auto& fmt_entry : options.requested_custom_formats()) {
+    if (const auto* fmt_name = std::get_if<std::string>(&fmt_entry)) {
+      UINT cf_custom = RegisterClipboardFormatW(Utf8ToWide(*fmt_name).c_str());
+      if (cf_custom != 0 && IsClipboardFormatAvailable(cf_custom)) {
+        HANDLE hdata = GetClipboardData(cf_custom);
+        if (hdata) {
+          const uint8_t* ptr = static_cast<const uint8_t*>(GlobalLock(hdata));
+          size_t sz = GlobalSize(hdata);
+          if (ptr && sz > 0) {
+            std::vector<uint8_t> bytes(ptr, ptr + sz);
+            custom_entries.push_back(
+                ::flutter::CustomEncodableValue(
+                    WireCustomFormatEntry(*fmt_name, bytes)));
+            has_any = true;
+          }
           GlobalUnlock(hdata);
         }
       }
     }
+  }
+  if (!custom_entries.empty()) {
+    item.set_custom_formats(custom_entries);
+  }
 
-    // 9. Requested Custom Formats
-    if (args_map) {
-      if (const auto* opts_val = GetMapValue(*args_map, "options")) {
-        if (const auto* opts = std::get_if<flutter::EncodableMap>(opts_val)) {
-          if (const auto* req_val =
-                  GetMapValue(*opts, "requestedCustomFormats")) {
-            if (const auto* req_list =
-                    std::get_if<flutter::EncodableList>(req_val)) {
-              flutter::EncodableMap custom_map;
-              for (const auto& fmt_entry : *req_list) {
-                if (const auto* fmt_name =
-                        std::get_if<std::string>(&fmt_entry)) {
-                  UINT cf_custom = RegisterClipboardFormatW(
-                      Utf8ToWide(*fmt_name).c_str());
-                  if (cf_custom != 0 &&
-                      IsClipboardFormatAvailable(cf_custom)) {
-                    HANDLE hdata = GetClipboardData(cf_custom);
-                    if (hdata) {
-                      const uint8_t* ptr =
-                          static_cast<const uint8_t*>(GlobalLock(hdata));
-                      size_t sz = GlobalSize(hdata);
-                      if (ptr && sz > 0) {
-                        std::vector<uint8_t> bytes(ptr, ptr + sz);
-                        custom_map[flutter::EncodableValue(*fmt_name)] =
-                            flutter::EncodableValue(bytes);
-                      }
-                      GlobalUnlock(hdata);
-                    }
-                  }
-                }
-              }
-              if (!custom_map.empty()) {
-                item[flutter::EncodableValue("customFormats")] =
-                    flutter::EncodableValue(custom_map);
-              }
-            }
-          }
+  ::flutter::EncodableList items_out;
+  if (has_any) {
+    items_out.push_back(::flutter::CustomEncodableValue(item));
+  }
+  return items_out;
+}
+
+void XueHuaNaviteClipboardPlugin::GetMetadata(
+    const WireClipboardBufferTarget& /*target*/,
+    bool /*detect_patterns*/,
+    std::function<void(ErrorOr<WireClipboardMetadata> reply)> result) {
+  DWORD seq = GetClipboardSequenceNumber();
+  ScopedClipboard clip(GetTargetWindow());
+
+  ::flutter::EncodableList raw_formats;
+  bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
+  UINT cf_html = RegisterClipboardFormatW(L"HTML Format");
+  bool has_html = cf_html != 0 && IsClipboardFormatAvailable(cf_html);
+  UINT cf_rtf = RegisterClipboardFormatW(L"Rich Text Format");
+  bool has_rtf = cf_rtf != 0 && IsClipboardFormatAvailable(cf_rtf);
+  UINT cf_md = RegisterClipboardFormatW(L"text/markdown");
+  bool has_md = cf_md != 0 && IsClipboardFormatAvailable(cf_md);
+  UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
+  bool has_uri = cf_url != 0 && IsClipboardFormatAvailable(cf_url);
+  UINT cf_png = RegisterClipboardFormatW(L"PNG");
+  UINT cf_mime_png_meta = RegisterClipboardFormatW(L"image/png");
+  bool has_image =
+      (cf_png != 0 && IsClipboardFormatAvailable(cf_png)) ||
+      (cf_mime_png_meta != 0 &&
+       IsClipboardFormatAvailable(cf_mime_png_meta)) ||
+      IsClipboardFormatAvailable(CF_DIB) ||
+      IsClipboardFormatAvailable(CF_BITMAP);
+  bool has_files = IsClipboardFormatAvailable(CF_HDROP) != FALSE;
+  UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
+  bool has_color = cf_color != 0 && IsClipboardFormatAvailable(cf_color);
+
+  if (clip.IsOpen()) {
+    UINT fmt = 0;
+    wchar_t name_buf[256];
+    while ((fmt = EnumClipboardFormats(fmt)) != 0) {
+      int len = GetClipboardFormatNameW(fmt, name_buf, 256);
+      if (len > 0) {
+        raw_formats.push_back(::flutter::EncodableValue(
+            WideToUtf8(std::wstring(name_buf, static_cast<size_t>(len)))));
+      } else {
+        switch (fmt) {
+          case CF_UNICODETEXT:
+            raw_formats.push_back(::flutter::EncodableValue("CF_UNICODETEXT"));
+            break;
+          case CF_BITMAP:
+            raw_formats.push_back(::flutter::EncodableValue("CF_BITMAP"));
+            break;
+          case CF_DIB:
+            raw_formats.push_back(::flutter::EncodableValue("CF_DIB"));
+            break;
+          case CF_DIBV5:
+            raw_formats.push_back(::flutter::EncodableValue("CF_DIBV5"));
+            break;
+          case CF_HDROP:
+            raw_formats.push_back(::flutter::EncodableValue("CF_HDROP"));
+            break;
+          default:
+            break;
         }
       }
     }
-
-    flutter::EncodableList items_out;
-    if (!item.empty()) {
-      items_out.push_back(flutter::EncodableValue(item));
-    }
-    result->Success(flutter::EncodableValue(items_out));
-    return;
   }
 
-  if (method == "getMetadata") {
-    DWORD seq = GetClipboardSequenceNumber();
-    ScopedClipboard clip(GetTargetWindow());
+  bool any_item = has_text || has_html || has_rtf || has_md || has_uri ||
+                  has_image || has_files || has_color || !raw_formats.empty();
 
-    flutter::EncodableList raw_formats;
-    bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
-    UINT cf_html = RegisterClipboardFormatW(L"HTML Format");
-    bool has_html = cf_html != 0 && IsClipboardFormatAvailable(cf_html);
-    UINT cf_rtf = RegisterClipboardFormatW(L"Rich Text Format");
-    bool has_rtf = cf_rtf != 0 && IsClipboardFormatAvailable(cf_rtf);
-    UINT cf_md = RegisterClipboardFormatW(L"text/markdown");
-    bool has_md = cf_md != 0 && IsClipboardFormatAvailable(cf_md);
-    UINT cf_url = RegisterClipboardFormatW(L"UniformResourceLocatorW");
-    bool has_uri = cf_url != 0 && IsClipboardFormatAvailable(cf_url);
-    UINT cf_png = RegisterClipboardFormatW(L"PNG");
-    UINT cf_mime_png_meta = RegisterClipboardFormatW(L"image/png");
-    bool has_image =
-        (cf_png != 0 && IsClipboardFormatAvailable(cf_png)) ||
-        (cf_mime_png_meta != 0 &&
-         IsClipboardFormatAvailable(cf_mime_png_meta)) ||
-        IsClipboardFormatAvailable(CF_DIB) ||
-        IsClipboardFormatAvailable(CF_BITMAP);
-    bool has_files = IsClipboardFormatAvailable(CF_HDROP) != FALSE;
-    UINT cf_color = RegisterClipboardFormatW(L"application/x-color");
-    bool has_color = cf_color != 0 && IsClipboardFormatAvailable(cf_color);
+  WireClipboardMetadata meta(
+      static_cast<int64_t>(seq),
+      nullptr,
+      any_item ? 1 : 0,
+      has_text,
+      has_html,
+      has_rtf,
+      has_md,
+      has_uri,
+      has_image,
+      has_files,
+      has_color,
+      raw_formats,
+      ::flutter::EncodableList());
+  result(meta);
+}
 
-    if (clip.IsOpen()) {
-      UINT fmt = 0;
-      wchar_t name_buf[256];
-      while ((fmt = EnumClipboardFormats(fmt)) != 0) {
-        int len = GetClipboardFormatNameW(fmt, name_buf, 256);
-        if (len > 0) {
-          raw_formats.push_back(
-              flutter::EncodableValue(WideToUtf8(std::wstring(name_buf, len))));
-        } else {
-          switch (fmt) {
-            case CF_UNICODETEXT:
-              raw_formats.push_back(flutter::EncodableValue("CF_UNICODETEXT"));
-              break;
-            case CF_BITMAP:
-              raw_formats.push_back(flutter::EncodableValue("CF_BITMAP"));
-              break;
-            case CF_DIB:
-              raw_formats.push_back(flutter::EncodableValue("CF_DIB"));
-              break;
-            case CF_DIBV5:
-              raw_formats.push_back(flutter::EncodableValue("CF_DIBV5"));
-              break;
-            case CF_HDROP:
-              raw_formats.push_back(flutter::EncodableValue("CF_HDROP"));
-              break;
-            default:
-              break;
-          }
-        }
-      }
-    }
+ErrorOr<int64_t> XueHuaNaviteClipboardPlugin::GetChangeCount(
+    const WireClipboardBufferTarget& /*target*/) {
+  DWORD seq = GetClipboardSequenceNumber();
+  return static_cast<int64_t>(seq);
+}
 
-    bool any_item = has_text || has_html || has_rtf || has_md || has_uri ||
-                    has_image || has_files || has_color || !raw_formats.empty();
-
-    flutter::EncodableMap meta = {
-        {flutter::EncodableValue("changeCount"),
-         flutter::EncodableValue(static_cast<int64_t>(seq))},
-        {flutter::EncodableValue("itemCount"),
-         flutter::EncodableValue(any_item ? 1 : 0)},
-        {flutter::EncodableValue("hasPlainText"),
-         flutter::EncodableValue(has_text)},
-        {flutter::EncodableValue("hasHtml"),
-         flutter::EncodableValue(has_html)},
-        {flutter::EncodableValue("hasRtf"), flutter::EncodableValue(has_rtf)},
-        {flutter::EncodableValue("hasMarkdown"),
-         flutter::EncodableValue(has_md)},
-        {flutter::EncodableValue("hasUri"), flutter::EncodableValue(has_uri)},
-        {flutter::EncodableValue("hasImage"),
-         flutter::EncodableValue(has_image)},
-        {flutter::EncodableValue("hasFiles"),
-         flutter::EncodableValue(has_files)},
-        {flutter::EncodableValue("hasColor"),
-         flutter::EncodableValue(has_color)},
-        {flutter::EncodableValue("rawPlatformFormats"),
-         flutter::EncodableValue(raw_formats)},
-        {flutter::EncodableValue("detectedPatterns"),
-         flutter::EncodableValue(flutter::EncodableList())},
-    };
-    result->Success(flutter::EncodableValue(meta));
-    return;
+ErrorOr<bool> XueHuaNaviteClipboardPlugin::Clear(
+    const WireClipboardBufferTarget& /*target*/) {
+  ScopedClipboard clip(GetTargetWindow());
+  if (!clip.IsOpen()) {
+    return FlutterError("CLIPBOARD_BUSY", "Failed to open Windows clipboard.");
   }
+  EmptyClipboard();
+  return true;
+}
 
-  result->NotImplemented();
+std::optional<FlutterError> XueHuaNaviteClipboardPlugin::SetPollingInterval(
+    int64_t /*interval_ms*/) {
+  return std::nullopt;
 }
 
 }  // namespace xue_hua_navite_clipboard

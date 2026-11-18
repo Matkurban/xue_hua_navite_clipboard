@@ -12,11 +12,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
 import io.flutter.embedding.engine.plugins.FlutterPlugin
-import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -25,19 +20,16 @@ import java.util.concurrent.atomic.AtomicInteger
 /** XueHuaNaviteClipboardPlugin */
 class XueHuaNaviteClipboardPlugin :
     FlutterPlugin,
-    MethodCallHandler,
-    EventChannel.StreamHandler {
+    ClipboardHostApi {
 
-    private lateinit var methodChannel: MethodChannel
-    private lateinit var eventChannel: EventChannel
+    private var pluginBinding: FlutterPlugin.FlutterPluginBinding? = null
     private var applicationContext: Context? = null
     private var clipboardManager: ClipboardManager? = null
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
     private val changeCounter = AtomicInteger(0)
     private var lastObservedTimestamp: Long = -1L
 
-    private var eventSink: EventChannel.EventSink? = null
     private var clipChangedListener: ClipboardManager.OnPrimaryClipChangedListener? = null
 
     companion object {
@@ -50,136 +42,48 @@ class XueHuaNaviteClipboardPlugin :
     }
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        pluginBinding = flutterPluginBinding
         applicationContext = flutterPluginBinding.applicationContext
         clipboardManager =
             applicationContext?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-
-        methodChannel = MethodChannel(flutterPluginBinding.binaryMessenger, "xue_hua_navite_clipboard")
-        methodChannel.setMethodCallHandler(this)
-
-        eventChannel =
-            EventChannel(flutterPluginBinding.binaryMessenger, "xue_hua_navite_clipboard/events")
-        eventChannel.setStreamHandler(this)
+        ClipboardHostApiRegistrar().register(this, flutterPluginBinding)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        stopNativeClipboardListener()
-        methodChannel.setMethodCallHandler(null)
-        eventChannel.setStreamHandler(null)
+        stopClipboardListening()
+        ClipboardHostApiRegistrar().unregister(this, binding)
+        pluginBinding = null
         applicationContext = null
         clipboardManager = null
     }
 
-    // ==================== EventChannel.StreamHandler (Lazy on-demand listener) ====================
+    // ==================== ClipboardHostApi ====================
 
-    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        eventSink = events
-        startNativeClipboardListener()
-    }
+    override fun writeItems(
+        items: List<WireClipboardItem>,
+        options: WireClipboardWriteOptions,
+    ): Boolean = runClipboardOp {
+        val ctx = applicationContext ?: return@runClipboardOp false
+        val manager = clipboardManager ?: return@runClipboardOp false
+        if (items.isEmpty()) return@runClipboardOp false
 
-    override fun onCancel(arguments: Any?) {
-        stopNativeClipboardListener()
-        eventSink = null
-    }
-
-    private fun startNativeClipboardListener() {
-        if (clipChangedListener != null) return
-        val manager = clipboardManager ?: return
-        val listener = ClipboardManager.OnPrimaryClipChangedListener {
-            val now = System.currentTimeMillis()
-            val clipTimestamp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                manager.primaryClipDescription?.timestamp ?: now
-            } else {
-                now
-            }
-            if (clipTimestamp != lastObservedTimestamp || now - lastObservedTimestamp > 50) {
-                lastObservedTimestamp = clipTimestamp
-                val count = changeCounter.incrementAndGet()
-                mainHandler.post {
-                    eventSink?.success(
-                        mapOf(
-                            "buffer" to "general",
-                            "changeCount" to count,
-                            "timestampMs" to clipTimestamp
-                        )
-                    )
-                }
-            }
-        }
-        clipChangedListener = listener
-        manager.addPrimaryClipChangedListener(listener)
-    }
-
-    private fun stopNativeClipboardListener() {
-        val listener = clipChangedListener ?: return
-        clipboardManager?.removePrimaryClipChangedListener(listener)
-        clipChangedListener = null
-    }
-
-    // ==================== MethodChannel Handler ====================
-
-    override fun onMethodCall(call: MethodCall, result: Result) {
-        try {
-            when (call.method) {
-                "writeItems" -> {
-                    val args = call.arguments as? Map<*, *>
-                    result.success(handleWriteItems(args))
-                }
-                "readItems" -> {
-                    val args = call.arguments as? Map<*, *>
-                    result.success(handleReadItems(args))
-                }
-                "getMetadata" -> {
-                    val args = call.arguments as? Map<*, *>
-                    result.success(handleGetMetadata(args))
-                }
-                "getChangeCount" -> {
-                    result.success(handleGetChangeCount())
-                }
-                "clear" -> {
-                    result.success(handleClear())
-                }
-                "setPollingInterval" -> {
-                    result.success(null)
-                }
-                else -> result.notImplemented()
-            }
-        } catch (e: SecurityException) {
-            result.error(
-                "BACKGROUND_RESTRICTED",
-                "Clipboard access denied by Android system (apps in background cannot read clipboard on Android 10+): ${e.message}",
-                null
-            )
-        } catch (e: Exception) {
-            result.error("CLIPBOARD_ERROR", e.message ?: "Unknown error on Android clipboard", null)
-        }
-    }
-
-    private fun handleWriteItems(args: Map<*, *>?): Boolean {
-        val ctx = applicationContext ?: return false
-        val manager = clipboardManager ?: return false
-        val rawItems = args?.get("items") as? List<*> ?: return false
-        if (rawItems.isEmpty()) return false
-
-        val options = args["options"] as? Map<*, *>
-        val isSensitive = options?.get("isSensitive") as? Boolean ?: false
-        val label = options?.get("label") as? String ?: "xue_hua_clipboard"
+        val isSensitive = options.isSensitive
+        val label = options.label ?: "xue_hua_clipboard"
 
         val mimeTypes = mutableSetOf<String>()
         val clipItems = mutableListOf<ClipData.Item>()
 
-        for ((index, rawItem) in rawItems.withIndex()) {
-            val itemMap = rawItem as? Map<*, *> ?: continue
-            val plainText = itemMap["plainText"] as? String
-            val html = itemMap["html"] as? String
-            val rtfBytes = itemMap["rtfBytes"] as? ByteArray
-            val markdown = itemMap["markdown"] as? String
-            val uriStr = itemMap["uri"] as? String
-            val imageBytes = itemMap["imageBytes"] as? ByteArray
-            val imageMimeType = (itemMap["imageMimeType"] as? String) ?: "image/png"
-            val files = (itemMap["files"] as? List<*>)?.mapNotNull { it as? String }
-            val colorValue = (itemMap["colorValue"] as? Number)?.toLong()
-            val customFormats = itemMap["customFormats"] as? Map<*, *>
+        for ((index, item) in items.withIndex()) {
+            val plainText = item.plainText
+            val html = item.html
+            val rtfBytes = item.rtfBytes
+            val markdown = item.markdown
+            val uriStr = item.uri
+            val imageBytes = item.imageBytes
+            val imageMimeType = item.imageMimeType ?: "image/png"
+            val files = item.files
+            val colorValue = item.colorValue
+            val customFormats = item.customFormats
 
             val effectiveText = plainText
                 ?: markdown
@@ -251,7 +155,6 @@ class XueHuaNaviteClipboardPlugin :
                             } else {
                                 dest.writeBytes(ByteArray(0))
                             }
-                            // Stable plugin mime so reads can distinguish shared files from custom blobs.
                             XueHuaClipboardContentProvider.createUriForFile(ctx, dest, MIME_SHARED_FILE)
                         }
                     }
@@ -259,27 +162,21 @@ class XueHuaNaviteClipboardPlugin :
                 }
             }
 
-            if (customFormats != null && customFormats.isNotEmpty()) {
+            if (!customFormats.isNullOrEmpty()) {
                 val shareDir = XueHuaClipboardContentProvider.getShareDir(ctx)
-                for ((k, v) in customFormats) {
-                    val fmtName = k as? String ?: continue
-                    val fmtBytes = coerceByteArray(v) ?: continue
-                    val safeName = fmtName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                    val customFile = File(shareDir, "clip_custom_${safeName}_$index.bin")
-                    FileOutputStream(customFile).use { it.write(fmtBytes) }
-                    val customUri = XueHuaClipboardContentProvider.createUriForFile(ctx, customFile, fmtName)
-                    mimeTypes.add(fmtName)
-                    clipItems.add(ClipData.Item(effectiveText, null, null, customUri))
+                for (entry in customFormats) {
+                    val mime = entry.format
+                    val data = entry.data
+                    mimeTypes.add(mime)
+                    val customFile = File(shareDir, "clip_custom_${System.currentTimeMillis()}_$index.bin")
+                    FileOutputStream(customFile).use { it.write(data) }
+                    val cUri = XueHuaClipboardContentProvider.createUriForFile(ctx, customFile, mime)
+                    clipItems.add(ClipData.Item(null, null, null, cUri))
                 }
-            }
-
-            if (clipItems.isEmpty()) {
-                clipItems.add(ClipData.Item(""))
-                mimeTypes.add(ClipDescription.MIMETYPE_TEXT_PLAIN)
             }
         }
 
-        if (clipItems.isEmpty()) return false
+        if (clipItems.isEmpty()) return@runClipboardOp false
 
         val description = ClipDescription(label, mimeTypes.toTypedArray())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -291,18 +188,20 @@ class XueHuaNaviteClipboardPlugin :
                     extras.putBoolean(EXTRA_IS_SENSITIVE_COMPAT, true)
                 }
             }
-            val firstItem = rawItems.firstOrNull() as? Map<*, *>
-            val markdown = firstItem?.get("markdown") as? String
+            val firstItem = items.firstOrNull()
+            val markdown = firstItem?.markdown
             if (markdown != null) {
                 extras.putString(MIME_MARKDOWN, markdown)
             }
-            val colorValue = (firstItem?.get("colorValue") as? Number)?.toLong()
+            val colorValue = firstItem?.colorValue
             if (colorValue != null) {
                 extras.putLong(MIME_COLOR, colorValue)
             }
-            val fileCopyMode = firstItem?.get("fileCopyMode") as? String
-            if (fileCopyMode != null) {
-                extras.putString(MIME_FILE_COPY_MODE, fileCopyMode)
+            if (firstItem != null) {
+                extras.putString(
+                    MIME_FILE_COPY_MODE,
+                    if (firstItem.fileCopyMode == WireFileCopyMode.CUT) "cut" else "copy",
+                )
             }
             description.extras = extras
         }
@@ -313,24 +212,30 @@ class XueHuaNaviteClipboardPlugin :
         }
         manager.setPrimaryClip(clipData)
         changeCounter.incrementAndGet()
-        return true
+        true
     }
 
-    private fun handleReadItems(args: Map<*, *>?): List<Map<String, Any?>> {
-        val ctx = applicationContext ?: return emptyList()
-        val manager = clipboardManager ?: return emptyList()
-        val clip = manager.primaryClip ?: return emptyList()
-        if (clip.itemCount == 0) return emptyList()
+    override fun readItems(
+        options: WireClipboardReadOptions,
+    ): List<WireClipboardItem> = runClipboardOp {
+        val ctx = applicationContext ?: return@runClipboardOp emptyList()
+        val manager = clipboardManager ?: return@runClipboardOp emptyList()
+        val clip = manager.primaryClip ?: return@runClipboardOp emptyList()
+        if (clip.itemCount == 0) return@runClipboardOp emptyList()
 
         val description = clip.description
         val extras = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) description?.extras else null
         val markdownExtra = extras?.getString(MIME_MARKDOWN)
         val colorExtra = if (extras != null && extras.containsKey(MIME_COLOR)) extras.getLong(MIME_COLOR) else null
-        val fileCopyModeExtra = extras?.getString(MIME_FILE_COPY_MODE) ?: "copy"
+        val fileCopyModeExtra = if (extras?.getString(MIME_FILE_COPY_MODE) == "cut") {
+            WireFileCopyMode.CUT
+        } else {
+            WireFileCopyMode.COPY
+        }
 
-        val results = mutableListOf<Map<String, Any?>>()
         val collectedFiles = mutableListOf<String>()
-        val collectedCustom = mutableMapOf<String, ByteArray>()
+        val collectedCustom = mutableListOf<WireCustomFormatEntry>()
+        val parsedItems = mutableListOf<WireClipboardItem>()
 
         for (i in 0 until clip.itemCount) {
             val item = clip.getItemAt(i)
@@ -363,7 +268,6 @@ class XueHuaNaviteClipboardPlugin :
                         )
                     when {
                         isSharedFile -> {
-                            // Prefer caller-facing path stored in item text for same-app roundtrips.
                             collectedFiles.add(text!!)
                         }
                         mime.startsWith("image/") -> {
@@ -388,7 +292,7 @@ class XueHuaNaviteClipboardPlugin :
                         }
                         mime.isNotEmpty() -> {
                             ctx.contentResolver.openInputStream(uri)?.use { input ->
-                                collectedCustom[mime] = input.readBytes()
+                                collectedCustom.add(WireCustomFormatEntry(format = mime, data = input.readBytes()))
                             }
                         }
                     }
@@ -404,52 +308,54 @@ class XueHuaNaviteClipboardPlugin :
                 }
             }
 
-            val itemMap = mutableMapOf<String, Any?>(
-                "plainText" to text,
-                "html" to html,
-                "rtfBytes" to rtfBytes,
-                "markdown" to if (i == 0) markdownExtra else null,
-                "uri" to parsedUriStr,
-                "imageBytes" to imageBytes,
-                "imageMimeType" to imageMime,
-                "fileCopyMode" to fileCopyModeExtra,
-                "colorValue" to if (i == 0) colorExtra else null
+            parsedItems.add(
+                WireClipboardItem(
+                    plainText = text,
+                    html = html,
+                    rtfBytes = rtfBytes,
+                    markdown = if (i == 0) markdownExtra else null,
+                    uri = parsedUriStr,
+                    imageBytes = imageBytes,
+                    imageMimeType = imageMime,
+                    files = null,
+                    fileCopyMode = fileCopyModeExtra,
+                    colorValue = if (i == 0) colorExtra else null,
+                    customFormats = null,
+                )
             )
-            results.add(itemMap)
         }
 
-        if (results.isNotEmpty()) {
-            val first = results[0].toMutableMap()
-            if (collectedFiles.isNotEmpty()) {
-                first["files"] = collectedFiles
-            }
-            if (collectedCustom.isNotEmpty()) {
-                first["customFormats"] = collectedCustom
-            }
-            results[0] = first
+        if (parsedItems.isNotEmpty() && (collectedFiles.isNotEmpty() || collectedCustom.isNotEmpty())) {
+            parsedItems[0] = parsedItems[0].copy(
+                files = collectedFiles.ifEmpty { null },
+                customFormats = collectedCustom.ifEmpty { null },
+            )
         }
 
-        return results
+        parsedItems
     }
 
-    private fun handleGetMetadata(args: Map<*, *>?): Map<String, Any?> {
+    override suspend fun getMetadata(
+        target: WireClipboardBufferTarget,
+        detectPatterns: Boolean,
+    ): WireClipboardMetadata = runClipboardOp {
         val manager = clipboardManager
         val desc = manager?.primaryClipDescription
         if (desc == null) {
-            return mapOf(
-                "changeCount" to changeCounter.get(),
-                "timestampMs" to null,
-                "itemCount" to 0,
-                "hasPlainText" to false,
-                "hasHtml" to false,
-                "hasRtf" to false,
-                "hasMarkdown" to false,
-                "hasUri" to false,
-                "hasImage" to false,
-                "hasFiles" to false,
-                "hasColor" to false,
-                "rawPlatformFormats" to emptyList<String>(),
-                "detectedPatterns" to emptyList<String>()
+            return@runClipboardOp WireClipboardMetadata(
+                changeCount = changeCounter.get().toLong(),
+                timestampMs = null,
+                itemCount = 0L,
+                hasPlainText = false,
+                hasHtml = false,
+                hasRtf = false,
+                hasMarkdown = false,
+                hasUri = false,
+                hasImage = false,
+                hasFiles = false,
+                hasColor = false,
+                rawPlatformFormats = emptyList(),
+                detectedPatterns = emptyList(),
             )
         }
 
@@ -474,52 +380,109 @@ class XueHuaNaviteClipboardPlugin :
             null
         }
 
-        val detectedPatterns = mutableListOf<String>()
-        val detectPatterns = args?.get("detectPatterns") as? Boolean ?: false
+        val detectedPatterns = mutableListOf<WireClipboardDetectedPattern>()
         if (detectPatterns && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (desc.classificationStatus == ClipDescription.CLASSIFICATION_COMPLETE) {
                 if (desc.getConfidenceScore(android.view.textclassifier.TextClassifier.TYPE_URL) > 0.5f) {
-                    detectedPatterns.add("probableWebUrl")
+                    detectedPatterns.add(WireClipboardDetectedPattern.PROBABLE_WEB_URL)
                 }
                 if (desc.getConfidenceScore(android.view.textclassifier.TextClassifier.TYPE_EMAIL) > 0.5f) {
-                    detectedPatterns.add("emailAddress")
+                    detectedPatterns.add(WireClipboardDetectedPattern.EMAIL_ADDRESS)
                 }
                 if (desc.getConfidenceScore(android.view.textclassifier.TextClassifier.TYPE_PHONE) > 0.5f) {
-                    detectedPatterns.add("phoneNumber")
+                    detectedPatterns.add(WireClipboardDetectedPattern.PHONE_NUMBER)
                 }
                 if (desc.getConfidenceScore(android.view.textclassifier.TextClassifier.TYPE_ADDRESS) > 0.5f) {
-                    detectedPatterns.add("postalAddress")
+                    detectedPatterns.add(WireClipboardDetectedPattern.POSTAL_ADDRESS)
                 }
                 if (desc.getConfidenceScore(android.view.textclassifier.TextClassifier.TYPE_FLIGHT_NUMBER) > 0.5f) {
-                    detectedPatterns.add("flightNumber")
+                    detectedPatterns.add(WireClipboardDetectedPattern.FLIGHT_NUMBER)
                 }
             }
         }
 
         val itemCount = try {
-            manager.primaryClip?.itemCount ?: 1
+            (manager.primaryClip?.itemCount ?: 1).toLong()
         } catch (_: Exception) {
-            1
+            1L
         }
 
-        return mapOf(
-            "changeCount" to handleGetChangeCount(),
-            "timestampMs" to timestampMs,
-            "itemCount" to itemCount,
-            "hasPlainText" to hasPlainText,
-            "hasHtml" to hasHtml,
-            "hasRtf" to hasRtf,
-            "hasMarkdown" to hasMarkdown,
-            "hasUri" to hasUri,
-            "hasImage" to hasImage,
-            "hasFiles" to hasFiles,
-            "hasColor" to hasColor,
-            "rawPlatformFormats" to mimeList,
-            "detectedPatterns" to detectedPatterns
+        WireClipboardMetadata(
+            changeCount = readCurrentChangeCount().toLong(),
+            timestampMs = timestampMs,
+            itemCount = itemCount,
+            hasPlainText = hasPlainText,
+            hasHtml = hasHtml,
+            hasRtf = hasRtf,
+            hasMarkdown = hasMarkdown,
+            hasUri = hasUri,
+            hasImage = hasImage,
+            hasFiles = hasFiles,
+            hasColor = hasColor,
+            rawPlatformFormats = mimeList,
+            detectedPatterns = detectedPatterns,
         )
     }
 
-    private fun handleGetChangeCount(): Int {
+    override fun getChangeCount(target: WireClipboardBufferTarget): Long = runClipboardOp {
+        readCurrentChangeCount().toLong()
+    }
+
+    override fun clear(target: WireClipboardBufferTarget): Boolean = runClipboardOp {
+        val manager = clipboardManager ?: return@runClipboardOp false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            manager.clearPrimaryClip()
+        } else {
+            manager.setPrimaryClip(ClipData.newPlainText("", ""))
+        }
+        changeCounter.incrementAndGet()
+        true
+    }
+
+    override fun setPollingInterval(intervalMs: Long) {
+        // Android uses system OnPrimaryClipChangedListener callbacks instead of polling.
+    }
+
+    override fun startClipboardListening() {
+        if (clipChangedListener != null) return
+        val manager = clipboardManager ?: return
+        val listener = ClipboardManager.OnPrimaryClipChangedListener {
+            val now = System.currentTimeMillis()
+            val clipTimestamp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.primaryClipDescription?.timestamp ?: now
+            } else {
+                now
+            }
+            if (clipTimestamp != lastObservedTimestamp || now - lastObservedTimestamp > 50) {
+                lastObservedTimestamp = clipTimestamp
+                val count = changeCounter.incrementAndGet().toLong()
+                mainHandler.post {
+                    val binding = pluginBinding ?: return@post
+                    try {
+                        ClipboardFlutterApiRegistrar().getInstance(binding)?.onClipboardChanged(
+                            WireClipboardChangeEvent(
+                                buffer = WireClipboardBuffer.GENERAL,
+                                changeCount = count,
+                                timestampMs = clipTimestamp,
+                            )
+                        )
+                    } catch (_: Exception) {
+                        // Ignore stale FlutterApi dispatch when engine/isolate is detaching.
+                    }
+                }
+            }
+        }
+        clipChangedListener = listener
+        manager.addPrimaryClipChangedListener(listener)
+    }
+
+    override fun stopClipboardListening() {
+        val listener = clipChangedListener ?: return
+        clipboardManager?.removePrimaryClipChangedListener(listener)
+        clipChangedListener = null
+    }
+
+    private fun readCurrentChangeCount(): Int {
         val manager = clipboardManager ?: return changeCounter.get()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ts = manager.primaryClipDescription?.timestamp ?: 0L
@@ -531,31 +494,23 @@ class XueHuaNaviteClipboardPlugin :
         return changeCounter.get()
     }
 
-    private fun handleClear(): Boolean {
-        val manager = clipboardManager ?: return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            manager.clearPrimaryClip()
-        } else {
-            manager.setPrimaryClip(ClipData.newPlainText("", ""))
-        }
-        changeCounter.incrementAndGet()
-        return true
-    }
-
-    private fun coerceByteArray(value: Any?): ByteArray? {
-        return when (value) {
-            null -> null
-            is ByteArray -> value
-            is List<*> -> {
-                val out = ByteArray(value.size)
-                for (i in value.indices) {
-                    val n = value[i] as? Number ?: return null
-                    out[i] = n.toByte()
-                }
-                out
-            }
-            else -> null
+    private inline fun <T> runClipboardOp(block: () -> T): T {
+        try {
+            return block()
+        } catch (e: FlutterError) {
+            throw e
+        } catch (e: SecurityException) {
+            throw FlutterError(
+                "BACKGROUND_RESTRICTED",
+                "Clipboard access denied by Android system (apps in background cannot read clipboard on Android 10+): ${e.message}",
+                null,
+            )
+        } catch (e: Exception) {
+            throw FlutterError(
+                "CLIPBOARD_ERROR",
+                e.message ?: "Unknown error on Android clipboard",
+                null,
+            )
         }
     }
 }
-

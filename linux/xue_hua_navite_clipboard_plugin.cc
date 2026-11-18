@@ -1,14 +1,15 @@
 #include "include/xue_hua_navite_clipboard/xue_hua_navite_clipboard_plugin.h"
 
 #include <flutter_linux/flutter_linux.h>
-#include <gtk/gtk.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <gtk/gtk.h>
 
 #include <cstring>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "clipboard_api.g.h"
 #include "xue_hua_navite_clipboard_plugin_private.h"
 
 #define XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(obj) \
@@ -25,7 +26,7 @@ struct StoredClipboardPayload {
 
 struct _XueHuaNaviteClipboardPlugin {
   GObject parent_instance;
-  FlEventChannel* event_channel;
+  ClipboardClipboardFlutterApi* flutter_api;
   bool is_listening;
   gulong clipboard_signal_id;
   gulong primary_signal_id;
@@ -33,18 +34,20 @@ struct _XueHuaNaviteClipboardPlugin {
   int64_t primary_change_count;
 };
 
-G_DEFINE_TYPE(XueHuaNaviteClipboardPlugin, xue_hua_navite_clipboard_plugin, g_object_get_type())
+G_DEFINE_TYPE(XueHuaNaviteClipboardPlugin, xue_hua_navite_clipboard_plugin,
+              g_object_get_type())
 
-static GtkClipboard* resolve_gtk_clipboard(const gchar* buffer_name) {
-  if (buffer_name != nullptr && strcmp(buffer_name, "primarySelection") == 0) {
+static GtkClipboard* resolve_gtk_clipboard(ClipboardWireClipboardBuffer buffer) {
+  if (buffer ==
+      XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_PRIMARY_SELECTION) {
     return gtk_clipboard_get(GDK_SELECTION_PRIMARY);
   }
   return gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
 }
 
-static void clipboard_get_func(GtkClipboard* clipboard,
+static void clipboard_get_func(GtkClipboard* /*clipboard*/,
                                GtkSelectionData* selection_data,
-                               guint info,
+                               guint /*info*/,
                                gpointer user_data) {
   auto* payload = static_cast<StoredClipboardPayload*>(user_data);
   if (!payload) return;
@@ -55,36 +58,38 @@ static void clipboard_get_func(GtkClipboard* clipboard,
 
   auto it = payload->target_bytes.find(target_name);
   if (it != payload->target_bytes.end()) {
-    gtk_selection_data_set(selection_data, target, 8,
-                           it->second.data(),
+    gtk_selection_data_set(selection_data, target, 8, it->second.data(),
                            static_cast<gint>(it->second.size()));
   }
 }
 
-static void clipboard_clear_func(GtkClipboard* clipboard, gpointer user_data) {
+static void clipboard_clear_func(GtkClipboard* /*clipboard*/,
+                                 gpointer user_data) {
   auto* payload = static_cast<StoredClipboardPayload*>(user_data);
   delete payload;
 }
 
 static void on_gtk_owner_change(GtkClipboard* clipboard,
-                                GdkEvent* event,
+                                GdkEvent* /*event*/,
                                 gpointer user_data) {
-  XueHuaNaviteClipboardPlugin* self = XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
-  if (!self->is_listening || !self->event_channel) return;
+  XueHuaNaviteClipboardPlugin* self =
+      XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
+  if (!self->is_listening || !self->flutter_api) return;
 
   bool is_primary = (clipboard == gtk_clipboard_get(GDK_SELECTION_PRIMARY));
   int64_t count = is_primary ? (++self->primary_change_count)
                              : (++self->general_change_count);
   int64_t now_ms = g_get_real_time() / 1000;
 
-  g_autoptr(FlValue) map = fl_value_new_map();
-  fl_value_set_string_take(
-      map, "buffer",
-      fl_value_new_string(is_primary ? "primarySelection" : "general"));
-  fl_value_set_string_take(map, "changeCount", fl_value_new_int(count));
-  fl_value_set_string_take(map, "timestampMs", fl_value_new_int(now_ms));
+  ClipboardWireClipboardBuffer wire_buffer =
+      is_primary
+          ? XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_PRIMARY_SELECTION
+          : XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL;
 
-  fl_event_channel_send(self->event_channel, map, nullptr, nullptr);
+  g_autoptr(ClipboardWireClipboardChangeEvent) change_event =
+      clipboard_wire_clipboard_change_event_new(wire_buffer, count, now_ms);
+  clipboard_clipboard_flutter_api_on_clipboard_changed(
+      self->flutter_api, change_event, nullptr, nullptr, nullptr);
 }
 
 static void start_native_listening(XueHuaNaviteClipboardPlugin* self) {
@@ -116,51 +121,33 @@ static void stop_native_listening(XueHuaNaviteClipboardPlugin* self) {
   }
 }
 
-static FlMethodErrorResponse* event_channel_listen_cb(FlEventChannel* channel,
-                                                      FlValue* args,
-                                                      gpointer user_data) {
-  XueHuaNaviteClipboardPlugin* self = XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
-  start_native_listening(self);
-  return nullptr;
-}
-
-static FlMethodErrorResponse* event_channel_cancel_cb(FlEventChannel* channel,
-                                                      FlValue* args,
-                                                      gpointer user_data) {
-  XueHuaNaviteClipboardPlugin* self = XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
-  stop_native_listening(self);
-  return nullptr;
-}
-
-static FlMethodResponse* handle_write_items(XueHuaNaviteClipboardPlugin* self,
-                                            FlValue* args) {
-  if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
-    g_autoptr(FlValue) res = fl_value_new_bool(FALSE);
-    return FL_METHOD_RESPONSE(fl_method_success_response_new(res));
-  }
-
-  FlValue* items = fl_value_lookup_string(args, "items");
+static ClipboardClipboardHostApiWriteItemsResponse* handle_write_items(
+    FlValue* items,
+    ClipboardWireClipboardWriteOptions* options,
+    gpointer /*user_data*/) {
   if (!items || fl_value_get_type(items) != FL_VALUE_TYPE_LIST ||
       fl_value_get_length(items) == 0) {
-    g_autoptr(FlValue) res = fl_value_new_bool(FALSE);
-    return FL_METHOD_RESPONSE(fl_method_success_response_new(res));
+    return clipboard_clipboard_host_api_write_items_response_new(FALSE);
   }
 
-  FlValue* first_item = fl_value_get_list_value(items, 0);
-  FlValue* options = fl_value_lookup_string(args, "options");
-  const gchar* buffer_name = "general";
-  bool is_sensitive = false;
-
-  if (options && fl_value_get_type(options) == FL_VALUE_TYPE_MAP) {
-    FlValue* buf_val = fl_value_lookup_string(options, "buffer");
-    if (buf_val && fl_value_get_type(buf_val) == FL_VALUE_TYPE_STRING) {
-      buffer_name = fl_value_get_string(buf_val);
-    }
-    FlValue* sens_val = fl_value_lookup_string(options, "isSensitive");
-    if (sens_val && fl_value_get_type(sens_val) == FL_VALUE_TYPE_BOOL) {
-      is_sensitive = fl_value_get_bool(sens_val);
-    }
+  FlValue* first_val = fl_value_get_list_value(items, 0);
+  if (!first_val || fl_value_get_type(first_val) != FL_VALUE_TYPE_CUSTOM ||
+      fl_value_get_custom_type(first_val) !=
+          clipboard_wire_clipboard_item_type_id) {
+    return clipboard_clipboard_host_api_write_items_response_new(FALSE);
   }
+  ClipboardWireClipboardItem* first_item = CLIPBOARD_WIRE_CLIPBOARD_ITEM(
+      fl_value_get_custom_value_object(first_val));
+  if (!first_item) {
+    return clipboard_clipboard_host_api_write_items_response_new(FALSE);
+  }
+
+  ClipboardWireClipboardBuffer buffer =
+      options ? clipboard_wire_clipboard_write_options_get_buffer(options)
+              : XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL;
+  gboolean is_sensitive =
+      options ? clipboard_wire_clipboard_write_options_get_is_sensitive(options)
+              : FALSE;
 
   auto* payload = new StoredClipboardPayload();
   auto add_str_target = [&](const char* target, const char* str) {
@@ -169,57 +156,57 @@ static FlMethodResponse* handle_write_items(XueHuaNaviteClipboardPlugin* self,
         std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(str),
                              reinterpret_cast<const uint8_t*>(str) + len);
   };
-  auto add_bytes_target = [&](const char* target, const uint8_t* ptr, size_t len) {
+  auto add_bytes_target = [&](const char* target, const uint8_t* ptr,
+                              size_t len) {
     payload->target_bytes[target] = std::vector<uint8_t>(ptr, ptr + len);
   };
 
-  FlValue* plain_val = fl_value_lookup_string(first_item, "plainText");
-  if (plain_val && fl_value_get_type(plain_val) == FL_VALUE_TYPE_STRING) {
-    const gchar* text = fl_value_get_string(plain_val);
+  if (const gchar* text =
+          clipboard_wire_clipboard_item_get_plain_text(first_item)) {
     add_str_target("UTF8_STRING", text);
     add_str_target("STRING", text);
     add_str_target("text/plain;charset=utf-8", text);
     add_str_target("text/plain", text);
   }
 
-  FlValue* html_val = fl_value_lookup_string(first_item, "html");
-  if (html_val && fl_value_get_type(html_val) == FL_VALUE_TYPE_STRING) {
-    add_str_target("text/html", fl_value_get_string(html_val));
+  if (const gchar* html = clipboard_wire_clipboard_item_get_html(first_item)) {
+    add_str_target("text/html", html);
   }
 
-  FlValue* rtf_val = fl_value_lookup_string(first_item, "rtfBytes");
-  if (rtf_val && fl_value_get_type(rtf_val) == FL_VALUE_TYPE_UINT8_LIST) {
-    const uint8_t* bytes = fl_value_get_uint8_list(rtf_val);
-    size_t len = fl_value_get_length(rtf_val);
-    add_bytes_target("text/rtf", bytes, len);
-    add_bytes_target("application/rtf", bytes, len);
+  size_t rtf_len = 0;
+  if (const uint8_t* rtf_bytes =
+          clipboard_wire_clipboard_item_get_rtf_bytes(first_item, &rtf_len)) {
+    if (rtf_len > 0) {
+      add_bytes_target("text/rtf", rtf_bytes, rtf_len);
+      add_bytes_target("application/rtf", rtf_bytes, rtf_len);
+    }
   }
 
-  FlValue* md_val = fl_value_lookup_string(first_item, "markdown");
-  if (md_val && fl_value_get_type(md_val) == FL_VALUE_TYPE_STRING) {
-    add_str_target("text/markdown", fl_value_get_string(md_val));
+  if (const gchar* md =
+          clipboard_wire_clipboard_item_get_markdown(first_item)) {
+    add_str_target("text/markdown", md);
   }
 
-  FlValue* uri_val = fl_value_lookup_string(first_item, "uri");
-  if (uri_val && fl_value_get_type(uri_val) == FL_VALUE_TYPE_STRING) {
-    add_str_target("text/uri-list", fl_value_get_string(uri_val));
+  if (const gchar* uri = clipboard_wire_clipboard_item_get_uri(first_item)) {
+    add_str_target("text/uri-list", uri);
   }
 
-  FlValue* img_val = fl_value_lookup_string(first_item, "imageBytes");
-  if (img_val && fl_value_get_type(img_val) == FL_VALUE_TYPE_UINT8_LIST) {
-    const uint8_t* bytes = fl_value_get_uint8_list(img_val);
-    size_t len = fl_value_get_length(img_val);
-    add_bytes_target("image/png", bytes, len);
+  size_t img_len = 0;
+  if (const uint8_t* img_bytes =
+          clipboard_wire_clipboard_item_get_image_bytes(first_item, &img_len)) {
+    if (img_len > 0) {
+      add_bytes_target("image/png", img_bytes, img_len);
+    }
   }
 
-  FlValue* files_val = fl_value_lookup_string(first_item, "files");
+  FlValue* files_val = clipboard_wire_clipboard_item_get_files(first_item);
   if (files_val && fl_value_get_type(files_val) == FL_VALUE_TYPE_LIST &&
       fl_value_get_length(files_val) > 0) {
-    const gchar* mode = "copy";
-    FlValue* mode_val = fl_value_lookup_string(first_item, "fileCopyMode");
-    if (mode_val && fl_value_get_type(mode_val) == FL_VALUE_TYPE_STRING) {
-      mode = fl_value_get_string(mode_val);
-    }
+    const gchar* mode =
+        clipboard_wire_clipboard_item_get_file_copy_mode(first_item) ==
+                XUE_HUA_NAVITE_CLIPBOARD_WIRE_FILE_COPY_MODE_CUT
+            ? "cut"
+            : "copy";
 
     std::string uri_list_str;
     std::string gnome_str(mode);
@@ -239,35 +226,42 @@ static FlMethodResponse* handle_write_items(XueHuaNaviteClipboardPlugin* self,
     add_str_target("x-special/mate-copied-files", gnome_str.c_str());
   }
 
-  FlValue* color_val = fl_value_lookup_string(first_item, "colorValue");
-  if (color_val && fl_value_get_type(color_val) == FL_VALUE_TYPE_INT) {
-    int64_t c = fl_value_get_int(color_val);
+  if (int64_t* color_ptr =
+          clipboard_wire_clipboard_item_get_color_value(first_item)) {
+    int64_t c = *color_ptr;
     add_bytes_target("application/x-color",
                      reinterpret_cast<const uint8_t*>(&c), sizeof(int64_t));
   }
 
-  FlValue* custom_val = fl_value_lookup_string(first_item, "customFormats");
-  if (custom_val && fl_value_get_type(custom_val) == FL_VALUE_TYPE_MAP) {
-    size_t map_len = fl_value_get_length(custom_val);
-    for (size_t i = 0; i < map_len; ++i) {
-      FlValue* k = fl_value_get_map_key(custom_val, i);
-      FlValue* v = fl_value_get_map_value(custom_val, i);
-      if (k && v && fl_value_get_type(k) == FL_VALUE_TYPE_STRING &&
-          fl_value_get_type(v) == FL_VALUE_TYPE_UINT8_LIST) {
-        add_bytes_target(fl_value_get_string(k), fl_value_get_uint8_list(v),
-                         fl_value_get_length(v));
+  FlValue* custom_val =
+      clipboard_wire_clipboard_item_get_custom_formats(first_item);
+  if (custom_val && fl_value_get_type(custom_val) == FL_VALUE_TYPE_LIST) {
+    size_t list_len = fl_value_get_length(custom_val);
+    for (size_t i = 0; i < list_len; ++i) {
+      FlValue* entry_val = fl_value_get_list_value(custom_val, i);
+      if (entry_val && fl_value_get_type(entry_val) == FL_VALUE_TYPE_CUSTOM &&
+          fl_value_get_custom_type(entry_val) ==
+              clipboard_wire_custom_format_entry_type_id) {
+        ClipboardWireCustomFormatEntry* entry =
+            CLIPBOARD_WIRE_CUSTOM_FORMAT_ENTRY(
+                fl_value_get_custom_value_object(entry_val));
+        if (entry) {
+          const gchar* fmt =
+              clipboard_wire_custom_format_entry_get_format(entry);
+          size_t data_len = 0;
+          const uint8_t* data =
+              clipboard_wire_custom_format_entry_get_data(entry, &data_len);
+          if (fmt && data && data_len > 0) {
+            add_bytes_target(fmt, data, data_len);
+          }
+        }
       }
     }
   }
 
-  if (is_sensitive) {
-    add_str_target("x-kde-passwordManagerHint", "secret");
-  }
-
   if (payload->target_bytes.empty()) {
     delete payload;
-    g_autoptr(FlValue) res = fl_value_new_bool(FALSE);
-    return FL_METHOD_RESPONSE(fl_method_success_response_new(res));
+    return clipboard_clipboard_host_api_write_items_response_new(FALSE);
   }
 
   std::vector<GtkTargetEntry> entries;
@@ -281,7 +275,7 @@ static FlMethodResponse* handle_write_items(XueHuaNaviteClipboardPlugin* self,
     entries.push_back(entry);
   }
 
-  GtkClipboard* cb = resolve_gtk_clipboard(buffer_name);
+  GtkClipboard* cb = resolve_gtk_clipboard(buffer);
   gboolean ok = gtk_clipboard_set_with_data(
       cb, entries.data(), static_cast<guint>(entries.size()),
       clipboard_get_func, clipboard_clear_func, payload);
@@ -293,33 +287,30 @@ static FlMethodResponse* handle_write_items(XueHuaNaviteClipboardPlugin* self,
     delete payload;
   }
 
-  g_autoptr(FlValue) res = fl_value_new_bool(ok);
-  return FL_METHOD_RESPONSE(fl_method_success_response_new(res));
+  return clipboard_clipboard_host_api_write_items_response_new(ok);
 }
 
-static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
-                                           FlValue* args) {
-  const gchar* buffer_name = "general";
-  FlValue* requested_custom = nullptr;
+static ClipboardClipboardHostApiReadItemsResponse* handle_read_items(
+    ClipboardWireClipboardReadOptions* options,
+    gpointer /*user_data*/) {
+  ClipboardWireClipboardBuffer buffer =
+      options ? clipboard_wire_clipboard_read_options_get_buffer(options)
+              : XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL;
+  FlValue* requested_custom =
+      options ? clipboard_wire_clipboard_read_options_get_requested_custom_formats(
+                    options)
+              : nullptr;
 
-  if (args && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
-    FlValue* opts = fl_value_lookup_string(args, "options");
-    if (opts && fl_value_get_type(opts) == FL_VALUE_TYPE_MAP) {
-      FlValue* buf_val = fl_value_lookup_string(opts, "buffer");
-      if (buf_val && fl_value_get_type(buf_val) == FL_VALUE_TYPE_STRING) {
-        buffer_name = fl_value_get_string(buf_val);
-      }
-      requested_custom =
-          fl_value_lookup_string(opts, "requestedCustomFormats");
-    }
-  }
+  GtkClipboard* cb = resolve_gtk_clipboard(buffer);
+  bool has_any = false;
 
-  GtkClipboard* cb = resolve_gtk_clipboard(buffer_name);
-  g_autoptr(FlValue) item = fl_value_new_map();
-
+  bool has_plain_text = false;
+  std::string plain_text;
   g_autofree gchar* text = gtk_clipboard_wait_for_text(cb);
   if (text) {
-    fl_value_set_string_take(item, "plainText", fl_value_new_string(text));
+    plain_text = std::string(text);
+    has_plain_text = true;
+    has_any = true;
   }
 
   auto read_target_bytes = [&](const char* target_str,
@@ -338,37 +329,38 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
     return success;
   };
 
+  bool has_html = false;
+  std::string html_str;
   std::vector<uint8_t> html_bytes;
   if (read_target_bytes("text/html", html_bytes)) {
-    std::string html_str(reinterpret_cast<const char*>(html_bytes.data()),
-                         html_bytes.size());
-    fl_value_set_string_take(item, "html",
-                             fl_value_new_string(html_str.c_str()));
+    html_str = std::string(reinterpret_cast<const char*>(html_bytes.data()),
+                           html_bytes.size());
+    has_html = true;
+    has_any = true;
   }
 
   std::vector<uint8_t> rtf_bytes;
-  if (read_target_bytes("text/rtf", rtf_bytes) ||
-      read_target_bytes("application/rtf", rtf_bytes)) {
-    fl_value_set_string_take(
-        item, "rtfBytes",
-        fl_value_new_uint8_list(rtf_bytes.data(), rtf_bytes.size()));
+  bool has_rtf = read_target_bytes("text/rtf", rtf_bytes) ||
+                 read_target_bytes("application/rtf", rtf_bytes);
+  if (has_rtf) {
+    has_any = true;
   }
 
+  bool has_markdown = false;
+  std::string markdown_str;
   std::vector<uint8_t> md_bytes;
   if (read_target_bytes("text/markdown", md_bytes)) {
-    std::string md_str(reinterpret_cast<const char*>(md_bytes.data()),
-                       md_bytes.size());
-    fl_value_set_string_take(item, "markdown",
-                             fl_value_new_string(md_str.c_str()));
+    markdown_str = std::string(reinterpret_cast<const char*>(md_bytes.data()),
+                               md_bytes.size());
+    has_markdown = true;
+    has_any = true;
   }
 
   std::vector<uint8_t> png_bytes;
+  bool has_image = false;
   if (read_target_bytes("image/png", png_bytes)) {
-    fl_value_set_string_take(
-        item, "imageBytes",
-        fl_value_new_uint8_list(png_bytes.data(), png_bytes.size()));
-    fl_value_set_string_take(item, "imageMimeType",
-                             fl_value_new_string("image/png"));
+    has_image = true;
+    has_any = true;
   } else if (gtk_clipboard_wait_is_image_available(cb)) {
     GdkPixbuf* pixbuf = gtk_clipboard_wait_for_image(cb);
     if (pixbuf) {
@@ -376,20 +368,21 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
       gsize buf_size = 0;
       if (gdk_pixbuf_save_to_buffer(pixbuf, &buf, &buf_size, "png", nullptr,
                                     nullptr)) {
-        fl_value_set_string_take(
-            item, "imageBytes",
-            fl_value_new_uint8_list(reinterpret_cast<const uint8_t*>(buf),
-                                    buf_size));
-        fl_value_set_string_take(item, "imageMimeType",
-                                 fl_value_new_string("image/png"));
+        const auto* raw = reinterpret_cast<const uint8_t*>(buf);
+        png_bytes.assign(raw, raw + buf_size);
+        has_image = true;
+        has_any = true;
         g_free(buf);
       }
       g_object_unref(pixbuf);
     }
   }
 
+  bool has_uri = false;
+  std::string uri_str;
   std::vector<uint8_t> gnome_bytes;
-  std::string file_copy_mode = "copy";
+  ClipboardWireFileCopyMode file_copy_mode =
+      XUE_HUA_NAVITE_CLIPBOARD_WIRE_FILE_COPY_MODE_COPY;
   g_autoptr(FlValue) files_list = fl_value_new_list();
 
   if (read_target_bytes("x-special/gnome-copied-files", gnome_bytes) ||
@@ -404,10 +397,13 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
       std::string line = content.substr(pos, next - pos);
       if (!line.empty() && line.back() == '\r') line.pop_back();
       if (first_line) {
-        if (line == "cut") file_copy_mode = "cut";
+        if (line == "cut") {
+          file_copy_mode = XUE_HUA_NAVITE_CLIPBOARD_WIRE_FILE_COPY_MODE_CUT;
+        }
         first_line = false;
       } else if (!line.empty()) {
-        g_autofree gchar* filename = g_filename_from_uri(line.c_str(), nullptr, nullptr);
+        g_autofree gchar* filename =
+            g_filename_from_uri(line.c_str(), nullptr, nullptr);
         if (filename) {
           fl_value_append_take(files_list, fl_value_new_string(filename));
         }
@@ -425,74 +421,101 @@ static FlMethodResponse* handle_read_items(XueHuaNaviteClipboardPlugin* self,
             fl_value_append_take(files_list, fl_value_new_string(filename));
           }
         } else if (i == 0) {
-          fl_value_set_string_take(item, "uri", fl_value_new_string(uris[i]));
+          uri_str = std::string(uris[i]);
+          has_uri = true;
+          has_any = true;
         }
       }
       g_strfreev(uris);
     }
   }
 
-  if (fl_value_get_length(files_list) > 0) {
-    fl_value_set_string(item, "files", files_list);
-    fl_value_set_string_take(item, "fileCopyMode",
-                             fl_value_new_string(file_copy_mode.c_str()));
+  bool has_files = fl_value_get_length(files_list) > 0;
+  if (has_files) {
+    has_any = true;
   }
 
+  bool has_color = false;
+  int64_t color_val = 0;
   std::vector<uint8_t> color_bytes;
   if (read_target_bytes("application/x-color", color_bytes) &&
       color_bytes.size() >= sizeof(int64_t)) {
-    int64_t c = 0;
-    memcpy(&c, color_bytes.data(), sizeof(int64_t));
-    fl_value_set_string_take(item, "colorValue", fl_value_new_int(c));
+    memcpy(&color_val, color_bytes.data(), sizeof(int64_t));
+    has_color = true;
+    has_any = true;
   }
 
+  g_autoptr(FlValue) custom_entries = fl_value_new_list();
   if (requested_custom &&
       fl_value_get_type(requested_custom) == FL_VALUE_TYPE_LIST) {
-    g_autoptr(FlValue) custom_map = fl_value_new_map();
     size_t n = fl_value_get_length(requested_custom);
     for (size_t i = 0; i < n; ++i) {
       FlValue* fmt_val = fl_value_get_list_value(requested_custom, i);
       if (fmt_val && fl_value_get_type(fmt_val) == FL_VALUE_TYPE_STRING) {
         const gchar* fmt_name = fl_value_get_string(fmt_val);
         std::vector<uint8_t> cbytes;
-        if (read_target_bytes(fmt_name, cbytes)) {
-          fl_value_set_string_take(
-              custom_map, fmt_name,
-              fl_value_new_uint8_list(cbytes.data(), cbytes.size()));
+        if (fmt_name && read_target_bytes(fmt_name, cbytes) && !cbytes.empty()) {
+          g_autoptr(ClipboardWireCustomFormatEntry) entry =
+              clipboard_wire_custom_format_entry_new(fmt_name, cbytes.data(),
+                                                     cbytes.size());
+          fl_value_append_take(
+              custom_entries,
+              fl_value_new_custom_object(
+                  clipboard_wire_custom_format_entry_type_id, G_OBJECT(entry)));
+          has_any = true;
         }
       }
     }
-    if (fl_value_get_length(custom_map) > 0) {
-      fl_value_set_string(item, "customFormats", custom_map);
-    }
   }
 
-  g_autoptr(FlValue) list = fl_value_new_list();
-  if (fl_value_get_length(item) > 0) {
-    fl_value_append(list, item);
+  g_autoptr(FlValue) result_list = fl_value_new_list();
+  if (has_any) {
+    g_autoptr(ClipboardWireClipboardItem) item = clipboard_wire_clipboard_item_new(
+        has_plain_text ? plain_text.c_str() : nullptr,
+        has_html ? html_str.c_str() : nullptr,
+        has_rtf ? rtf_bytes.data() : nullptr,
+        has_rtf ? rtf_bytes.size() : 0,
+        has_markdown ? markdown_str.c_str() : nullptr,
+        has_uri ? uri_str.c_str() : nullptr,
+        has_image ? png_bytes.data() : nullptr,
+        has_image ? png_bytes.size() : 0,
+        "image/png",
+        has_files ? files_list : nullptr,
+        file_copy_mode,
+        has_color ? &color_val : nullptr,
+        fl_value_get_length(custom_entries) > 0 ? custom_entries : nullptr);
+    fl_value_append_take(
+        result_list, fl_value_new_custom_object(
+                         clipboard_wire_clipboard_item_type_id, G_OBJECT(item)));
   }
-  return FL_METHOD_RESPONSE(fl_method_success_response_new(list));
+
+  return clipboard_clipboard_host_api_read_items_response_new(result_list);
 }
 
-static FlMethodResponse* handle_get_metadata(XueHuaNaviteClipboardPlugin* self,
-                                             FlValue* args) {
-  const gchar* buffer_name = "general";
-  if (args && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
-    FlValue* buf_val = fl_value_lookup_string(args, "buffer");
-    if (buf_val && fl_value_get_type(buf_val) == FL_VALUE_TYPE_STRING) {
-      buffer_name = fl_value_get_string(buf_val);
-    }
-  }
+static void handle_get_metadata(
+    ClipboardWireClipboardBufferTarget* target,
+    gboolean /*detect_patterns*/,
+    ClipboardClipboardHostApiResponseHandle* response_handle,
+    gpointer user_data) {
+  XueHuaNaviteClipboardPlugin* self =
+      XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
+  ClipboardWireClipboardBuffer buffer =
+      target ? clipboard_wire_clipboard_buffer_target_get_buffer(target)
+             : XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL;
 
-  GtkClipboard* cb = resolve_gtk_clipboard(buffer_name);
-  bool is_primary = (strcmp(buffer_name, "primarySelection") == 0);
+  GtkClipboard* cb = resolve_gtk_clipboard(buffer);
+  bool is_primary =
+      (buffer ==
+       XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_PRIMARY_SELECTION);
   int64_t change_count =
       is_primary ? self->primary_change_count : self->general_change_count;
 
   g_autoptr(FlValue) raw_formats = fl_value_new_list();
-  bool has_text = gtk_clipboard_wait_is_text_available(cb);
-  bool has_image = gtk_clipboard_wait_is_image_available(cb);
-  bool has_uris = gtk_clipboard_wait_is_uris_available(cb);
+  g_autoptr(FlValue) detected_patterns = fl_value_new_list();
+
+  bool has_text = gtk_clipboard_wait_is_text_available(cb) != FALSE;
+  bool has_image = gtk_clipboard_wait_is_image_available(cb) != FALSE;
+  bool has_uris = gtk_clipboard_wait_is_uris_available(cb) != FALSE;
   bool has_html = false;
   bool has_rtf = false;
   bool has_md = false;
@@ -508,8 +531,9 @@ static FlMethodResponse* handle_get_metadata(XueHuaNaviteClipboardPlugin* self,
         fl_value_append_take(raw_formats, fl_value_new_string(name));
         if (strcmp(name, "text/html") == 0) has_html = true;
         if (strcmp(name, "text/rtf") == 0 ||
-            strcmp(name, "application/rtf") == 0)
+            strcmp(name, "application/rtf") == 0) {
           has_rtf = true;
+        }
         if (strcmp(name, "text/markdown") == 0) has_md = true;
         if (strcmp(name, "x-special/gnome-copied-files") == 0) has_files = true;
         if (strcmp(name, "application/x-color") == 0) has_color = true;
@@ -518,86 +542,100 @@ static FlMethodResponse* handle_get_metadata(XueHuaNaviteClipboardPlugin* self,
     g_free(targets);
   }
 
-  g_autoptr(FlValue) meta = fl_value_new_map();
-  fl_value_set_string_take(meta, "changeCount", fl_value_new_int(change_count));
-  fl_value_set_string_take(
-      meta, "itemCount",
-      fl_value_new_int(fl_value_get_length(raw_formats) > 0 ? 1 : 0));
-  fl_value_set_string_take(meta, "hasPlainText", fl_value_new_bool(has_text));
-  fl_value_set_string_take(meta, "hasHtml", fl_value_new_bool(has_html));
-  fl_value_set_string_take(meta, "hasRtf", fl_value_new_bool(has_rtf));
-  fl_value_set_string_take(meta, "hasMarkdown", fl_value_new_bool(has_md));
-  fl_value_set_string_take(meta, "hasUri", fl_value_new_bool(has_uris));
-  fl_value_set_string_take(meta, "hasImage", fl_value_new_bool(has_image));
-  fl_value_set_string_take(meta, "hasFiles", fl_value_new_bool(has_files));
-  fl_value_set_string_take(meta, "hasColor", fl_value_new_bool(has_color));
-  fl_value_set_string(meta, "rawPlatformFormats", raw_formats);
-  fl_value_set_string_take(meta, "detectedPatterns", fl_value_new_list());
+  g_autoptr(ClipboardWireClipboardMetadata) meta =
+      clipboard_wire_clipboard_metadata_new(
+          change_count,
+          nullptr,
+          fl_value_get_length(raw_formats) > 0 ? 1 : 0,
+          has_text,
+          has_html,
+          has_rtf,
+          has_md,
+          has_uris,
+          has_image,
+          has_files,
+          has_color,
+          raw_formats,
+          detected_patterns);
 
-  return FL_METHOD_RESPONSE(fl_method_success_response_new(meta));
+  clipboard_clipboard_host_api_respond_get_metadata(response_handle, meta);
 }
 
-static void xue_hua_navite_clipboard_plugin_handle_method_call(
-    XueHuaNaviteClipboardPlugin* self,
-    FlMethodCall* method_call) {
-  g_autoptr(FlMethodResponse) response = nullptr;
-
-  const gchar* method = fl_method_call_get_name(method_call);
-  FlValue* args = fl_method_call_get_args(method_call);
-
-  if (strcmp(method, "writeItems") == 0) {
-    response = handle_write_items(self, args);
-  } else if (strcmp(method, "readItems") == 0) {
-    response = handle_read_items(self, args);
-  } else if (strcmp(method, "getMetadata") == 0) {
-    response = handle_get_metadata(self, args);
-  } else if (strcmp(method, "getChangeCount") == 0) {
-    const gchar* buffer_name = "general";
-    if (args && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
-      FlValue* buf_val = fl_value_lookup_string(args, "buffer");
-      if (buf_val && fl_value_get_type(buf_val) == FL_VALUE_TYPE_STRING) {
-        buffer_name = fl_value_get_string(buf_val);
-      }
-    }
-    int64_t count = (strcmp(buffer_name, "primarySelection") == 0)
-                        ? self->primary_change_count
-                        : self->general_change_count;
-    g_autoptr(FlValue) res = fl_value_new_int(count);
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(res));
-  } else if (strcmp(method, "clear") == 0) {
-    const gchar* buffer_name = "general";
-    if (args && fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
-      FlValue* buf_val = fl_value_lookup_string(args, "buffer");
-      if (buf_val && fl_value_get_type(buf_val) == FL_VALUE_TYPE_STRING) {
-        buffer_name = fl_value_get_string(buf_val);
-      }
-    }
-    GtkClipboard* cb = resolve_gtk_clipboard(buffer_name);
-    gtk_clipboard_clear(cb);
-    g_autoptr(FlValue) res = fl_value_new_bool(TRUE);
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(res));
-  } else if (strcmp(method, "setPollingInterval") == 0) {
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
-  } else {
-    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
-  }
-
-  fl_method_call_respond(method_call, response, nullptr);
+static ClipboardClipboardHostApiGetChangeCountResponse* handle_get_change_count(
+    ClipboardWireClipboardBufferTarget* target,
+    gpointer user_data) {
+  XueHuaNaviteClipboardPlugin* self =
+      XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
+  ClipboardWireClipboardBuffer buffer =
+      target ? clipboard_wire_clipboard_buffer_target_get_buffer(target)
+             : XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL;
+  int64_t count =
+      (buffer ==
+       XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_PRIMARY_SELECTION)
+          ? self->primary_change_count
+          : self->general_change_count;
+  return clipboard_clipboard_host_api_get_change_count_response_new(count);
 }
+
+static ClipboardClipboardHostApiClearResponse* handle_clear(
+    ClipboardWireClipboardBufferTarget* target,
+    gpointer /*user_data*/) {
+  ClipboardWireClipboardBuffer buffer =
+      target ? clipboard_wire_clipboard_buffer_target_get_buffer(target)
+             : XUE_HUA_NAVITE_CLIPBOARD_WIRE_CLIPBOARD_BUFFER_GENERAL;
+  GtkClipboard* cb = resolve_gtk_clipboard(buffer);
+  gtk_clipboard_clear(cb);
+  return clipboard_clipboard_host_api_clear_response_new(TRUE);
+}
+
+static ClipboardClipboardHostApiSetPollingIntervalResponse*
+handle_set_polling_interval(int64_t /*interval_ms*/, gpointer /*user_data*/) {
+  return clipboard_clipboard_host_api_set_polling_interval_response_new();
+}
+
+static ClipboardClipboardHostApiStartClipboardListeningResponse*
+handle_start_clipboard_listening(gpointer user_data) {
+  XueHuaNaviteClipboardPlugin* self =
+      XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
+  start_native_listening(self);
+  return clipboard_clipboard_host_api_start_clipboard_listening_response_new();
+}
+
+static ClipboardClipboardHostApiStopClipboardListeningResponse*
+handle_stop_clipboard_listening(gpointer user_data) {
+  XueHuaNaviteClipboardPlugin* self =
+      XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
+  stop_native_listening(self);
+  return clipboard_clipboard_host_api_stop_clipboard_listening_response_new();
+}
+
+static const ClipboardClipboardHostApiVTable kHostApiVTable = {
+    .write_items = handle_write_items,
+    .read_items = handle_read_items,
+    .get_metadata = handle_get_metadata,
+    .get_change_count = handle_get_change_count,
+    .clear = handle_clear,
+    .set_polling_interval = handle_set_polling_interval,
+    .start_clipboard_listening = handle_start_clipboard_listening,
+    .stop_clipboard_listening = handle_stop_clipboard_listening,
+};
 
 static void xue_hua_navite_clipboard_plugin_dispose(GObject* object) {
   XueHuaNaviteClipboardPlugin* self = XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(object);
   stop_native_listening(self);
-  g_clear_object(&self->event_channel);
-  G_OBJECT_CLASS(xue_hua_navite_clipboard_plugin_parent_class)->dispose(object);
+  g_clear_object(&self->flutter_api);
+  G_OBJECT_CLASS(xue_hua_navite_clipboard_plugin_parent_class)
+      ->dispose(object);
 }
 
-static void xue_hua_navite_clipboard_plugin_class_init(XueHuaNaviteClipboardPluginClass* klass) {
+static void xue_hua_navite_clipboard_plugin_class_init(
+    XueHuaNaviteClipboardPluginClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = xue_hua_navite_clipboard_plugin_dispose;
 }
 
-static void xue_hua_navite_clipboard_plugin_init(XueHuaNaviteClipboardPlugin* self) {
-  self->event_channel = nullptr;
+static void xue_hua_navite_clipboard_plugin_init(
+    XueHuaNaviteClipboardPlugin* self) {
+  self->flutter_api = nullptr;
   self->is_listening = false;
   self->clipboard_signal_id = 0;
   self->primary_signal_id = 0;
@@ -605,34 +643,18 @@ static void xue_hua_navite_clipboard_plugin_init(XueHuaNaviteClipboardPlugin* se
   self->primary_change_count = 0;
 }
 
-static void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
-                           gpointer user_data) {
-  XueHuaNaviteClipboardPlugin* plugin = XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(user_data);
-  xue_hua_navite_clipboard_plugin_handle_method_call(plugin, method_call);
-}
-
-void xue_hua_navite_clipboard_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
+void xue_hua_navite_clipboard_plugin_register_with_registrar(
+    FlPluginRegistrar* registrar) {
   XueHuaNaviteClipboardPlugin* plugin = XUE_HUA_NAVITE_CLIPBOARD_PLUGIN(
       g_object_new(xue_hua_navite_clipboard_plugin_get_type(), nullptr));
 
-  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
-  g_autoptr(FlMethodChannel) channel =
-      fl_method_channel_new(fl_plugin_registrar_get_messenger(registrar),
-                            "xue_hua_navite_clipboard",
-                            FL_METHOD_CODEC(codec));
-  fl_method_channel_set_method_call_handler(channel, method_call_cb,
-                                            g_object_ref(plugin),
-                                            g_object_unref);
+  FlBinaryMessenger* messenger = fl_plugin_registrar_get_messenger(registrar);
+  plugin->flutter_api =
+      clipboard_clipboard_flutter_api_new(messenger, nullptr);
 
-  plugin->event_channel =
-      fl_event_channel_new(fl_plugin_registrar_get_messenger(registrar),
-                           "xue_hua_navite_clipboard/events",
-                           FL_METHOD_CODEC(codec));
-  fl_event_channel_set_stream_handlers(plugin->event_channel,
-                                       event_channel_listen_cb,
-                                       event_channel_cancel_cb,
-                                       g_object_ref(plugin),
-                                       g_object_unref);
+  clipboard_clipboard_host_api_set_method_handlers(
+      messenger, nullptr, &kHostApiVTable, g_object_ref(plugin),
+      g_object_unref);
 
   g_object_unref(plugin);
 }

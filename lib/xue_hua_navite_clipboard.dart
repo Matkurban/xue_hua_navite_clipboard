@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'src/clipboard_backend.dart';
 import 'src/models/clipboard_change_event.dart';
 import 'src/models/clipboard_format.dart';
 import 'src/models/clipboard_item.dart';
@@ -8,7 +9,6 @@ import 'src/models/clipboard_metadata.dart';
 import 'src/models/clipboard_read_options.dart';
 import 'src/models/clipboard_write_options.dart';
 import 'src/models/file_copy_mode.dart';
-import 'xue_hua_navite_clipboard_platform_interface.dart';
 
 export 'src/exceptions/clipboard_exception.dart';
 export 'src/models/clipboard_change_event.dart';
@@ -18,15 +18,14 @@ export 'src/models/clipboard_metadata.dart';
 export 'src/models/clipboard_read_options.dart';
 export 'src/models/clipboard_write_options.dart';
 export 'src/models/file_copy_mode.dart';
-export 'xue_hua_navite_clipboard_platform_interface.dart';
 
 /// 跨平台全功能原生剪切板核心类
 class XueHuaNaviteClipboard {
   /// Constructs a [XueHuaNaviteClipboard] instance.
-  XueHuaNaviteClipboard();
+  XueHuaNaviteClipboard._();
 
   /// 全局单例访问入口
-  static final XueHuaNaviteClipboard instance = XueHuaNaviteClipboard();
+  static final XueHuaNaviteClipboard instance = XueHuaNaviteClipboard._();
 
   static final RegExp _htmlTagStripRegex = RegExp(
     r'<[^>]*>',
@@ -218,10 +217,7 @@ class XueHuaNaviteClipboard {
     List<ClipboardDataItem> items, {
     ClipboardWriteOptions options = const ClipboardWriteOptions(),
   }) {
-    return XueHuaNaviteClipboardPlatform.instance.writeItems(
-      items,
-      options: options,
-    );
+    return ClipboardBackend.instance.writeItems(items, options: options);
   }
 
   // ==================== 3. 读取 API ====================
@@ -230,7 +226,7 @@ class XueHuaNaviteClipboard {
   Future<String?> readText({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.plainText.mimeType,
     );
@@ -244,7 +240,7 @@ class XueHuaNaviteClipboard {
   Future<String?> readHtml({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.html.mimeType,
     );
@@ -258,7 +254,7 @@ class XueHuaNaviteClipboard {
   Future<Uint8List?> readRtf({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.rtf.mimeType,
     );
@@ -272,7 +268,7 @@ class XueHuaNaviteClipboard {
   Future<String?> readMarkdown({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.markdown.mimeType,
     );
@@ -286,7 +282,7 @@ class XueHuaNaviteClipboard {
   Future<Uri?> readUri({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.uri.mimeType,
     );
@@ -300,7 +296,7 @@ class XueHuaNaviteClipboard {
   Future<Uint8List?> readImage({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.png.mimeType,
     );
@@ -314,7 +310,7 @@ class XueHuaNaviteClipboard {
   Future<List<String>> readFiles({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.fileList.mimeType,
     );
@@ -334,7 +330,7 @@ class XueHuaNaviteClipboard {
   Future<FileCopyMode?> readFileCopyMode({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.fileList.mimeType,
     );
@@ -350,7 +346,7 @@ class XueHuaNaviteClipboard {
   Future<int?> readColor({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) async {
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: options,
       targetFormat: StandardClipboardFormat.color.mimeType,
     );
@@ -374,7 +370,7 @@ class XueHuaNaviteClipboard {
         format,
       }.toList(),
     );
-    final items = await XueHuaNaviteClipboardPlatform.instance.readItems(
+    final items = await ClipboardBackend.instance.readItems(
       options: mergedOptions,
       targetFormat: format,
     );
@@ -399,7 +395,7 @@ class XueHuaNaviteClipboard {
   Future<List<ClipboardDataItem>> readItems({
     ClipboardReadOptions options = const ClipboardReadOptions(),
   }) {
-    return XueHuaNaviteClipboardPlatform.instance.readItems(options: options);
+    return ClipboardBackend.instance.readItems(options: options);
   }
 
   // ==================== 4. 元数据探测、清理与实时监听 API ====================
@@ -410,7 +406,7 @@ class XueHuaNaviteClipboard {
     String? customBufferName,
     bool detectPatterns = false,
   }) {
-    return XueHuaNaviteClipboardPlatform.instance.getMetadata(
+    return ClipboardBackend.instance.getMetadata(
       buffer: buffer,
       customBufferName: customBufferName,
       detectPatterns: detectPatterns,
@@ -465,7 +461,7 @@ class XueHuaNaviteClipboard {
     ClipboardBuffer buffer = ClipboardBuffer.general,
     String? customBufferName,
   }) {
-    return XueHuaNaviteClipboardPlatform.instance.getChangeCount(
+    return ClipboardBackend.instance.getChangeCount(
       buffer: buffer,
       customBufferName: customBufferName,
     );
@@ -476,7 +472,7 @@ class XueHuaNaviteClipboard {
     ClipboardBuffer buffer = ClipboardBuffer.general,
     String? customBufferName,
   }) {
-    return XueHuaNaviteClipboardPlatform.instance.clear(
+    return ClipboardBackend.instance.clear(
       buffer: buffer,
       customBufferName: customBufferName,
     );
@@ -486,11 +482,11 @@ class XueHuaNaviteClipboard {
   /// 仅当添加监听（`.listen(...)`）时才会触发原生端注册系统监听/定时器；
   /// 当取消最后一个订阅（`subscription.cancel()`）时原生端立即注销系统监听，无任何后台空转开销。
   Stream<ClipboardChangeEvent> get onClipboardChanged {
-    return XueHuaNaviteClipboardPlatform.instance.onClipboardChanged;
+    return ClipboardBackend.instance.onClipboardChanged;
   }
 
   /// 配置轮询间隔（仅对无系统级广播通知的平台如 macOS 在存在活跃监听者时生效，默认 500ms）
   Future<void> setPollingInterval(Duration interval) {
-    return XueHuaNaviteClipboardPlatform.instance.setPollingInterval(interval);
+    return ClipboardBackend.instance.setPollingInterval(interval);
   }
 }

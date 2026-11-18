@@ -3,13 +3,11 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:xue_hua_navite_clipboard/src/clipboard_backend.dart';
+import 'package:xue_hua_navite_clipboard/src/pigeon_clipboard_backend.dart';
 import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard.dart';
-import 'package:xue_hua_navite_clipboard/xue_hua_navite_clipboard_method_channel.dart';
 
-class MockXueHuaNaviteClipboardPlatform
-    with MockPlatformInterfaceMixin
-    implements XueHuaNaviteClipboardPlatform {
+class FakeClipboardBackend implements ClipboardBackend {
   List<ClipboardDataItem> storedItems = <ClipboardDataItem>[];
   ClipboardWriteOptions? lastWriteOptions;
   ClipboardReadOptions? lastReadOptions;
@@ -136,20 +134,23 @@ class MockXueHuaNaviteClipboardPlatform
 }
 
 void main() {
-  final XueHuaNaviteClipboardPlatform initialPlatform =
-      XueHuaNaviteClipboardPlatform.instance;
+  final ClipboardBackend initialBackend = ClipboardBackend.instance;
 
   late XueHuaNaviteClipboard clipboard;
-  late MockXueHuaNaviteClipboardPlatform fakePlatform;
+  late FakeClipboardBackend fakeBackend;
 
   setUp(() {
-    clipboard = XueHuaNaviteClipboard();
-    fakePlatform = MockXueHuaNaviteClipboardPlatform();
-    XueHuaNaviteClipboardPlatform.instance = fakePlatform;
+    clipboard = XueHuaNaviteClipboard.instance;
+    fakeBackend = FakeClipboardBackend();
+    ClipboardBackend.instance = fakeBackend;
   });
 
-  test('$MethodChannelXueHuaNaviteClipboard is the default instance', () {
-    expect(initialPlatform, isInstanceOf<MethodChannelXueHuaNaviteClipboard>());
+  tearDown(() {
+    ClipboardBackend.instance = initialBackend;
+  });
+
+  test('PigeonClipboardBackend is the default backend', () {
+    expect(initialBackend, isA<PigeonClipboardBackend>());
   });
 
   test('writeText and readText', () async {
@@ -163,11 +164,11 @@ void main() {
       'MySuperSecretPassword!123',
       expiration: const Duration(seconds: 30),
     );
-    expect(fakePlatform.lastWriteOptions?.isSensitive, isTrue);
-    expect(fakePlatform.lastWriteOptions?.isTransient, isTrue);
-    expect(fakePlatform.lastWriteOptions?.localOnly, isTrue);
+    expect(fakeBackend.lastWriteOptions?.isSensitive, isTrue);
+    expect(fakeBackend.lastWriteOptions?.isTransient, isTrue);
+    expect(fakeBackend.lastWriteOptions?.localOnly, isTrue);
     expect(
-      fakePlatform.lastWriteOptions?.expiration,
+      fakeBackend.lastWriteOptions?.expiration,
       const Duration(seconds: 30),
     );
     expect(await clipboard.readText(), 'MySuperSecretPassword!123');
@@ -187,6 +188,20 @@ void main() {
     expect(utf8.decode(rtfBytes!), rtf);
     expect(await clipboard.readText(), 'Hello RTF');
   });
+
+  test(
+    'writeMarkdown and readMarkdown preserve markdown and plainText fallback',
+    () async {
+      await clipboard.writeMarkdown('# Heading');
+      expect(await clipboard.readMarkdown(), '# Heading');
+      expect(await clipboard.readText(), '# Heading');
+
+      fakeBackend.storedItems = <ClipboardDataItem>[
+        const ClipboardDataItem(plainText: 'fallback only'),
+      ];
+      expect(await clipboard.readMarkdown(), 'fallback only');
+    },
+  );
 
   test('writeImage and readImage', () async {
     final pngStub = Uint8List.fromList(<int>[137, 80, 78, 71, 13, 10, 26, 10]);
@@ -218,20 +233,23 @@ void main() {
     expect(await clipboard.hasFormat('application/x-xuehua-node'), isTrue);
   });
 
-  test('onClipboardChanged only activates native listener when subscribed', () async {
-    expect(fakePlatform.activeListenerCount, 0);
+  test(
+    'onClipboardChanged only activates native listener when subscribed',
+    () async {
+      expect(fakeBackend.activeListenerCount, 0);
 
-    final events = <ClipboardChangeEvent>[];
-    final sub = clipboard.onClipboardChanged.listen(events.add);
+      final events = <ClipboardChangeEvent>[];
+      final sub = clipboard.onClipboardChanged.listen(events.add);
 
-    expect(fakePlatform.activeListenerCount, 1);
+      expect(fakeBackend.activeListenerCount, 1);
 
-    await clipboard.writeText('Trigger event');
-    await Future<void>.delayed(Duration.zero);
-    expect(events.length, 1);
-    expect(events.first.changeCount, 1);
+      await clipboard.writeText('Trigger event');
+      await Future<void>.delayed(Duration.zero);
+      expect(events.length, 1);
+      expect(events.first.changeCount, 1);
 
-    await sub.cancel();
-    expect(fakePlatform.activeListenerCount, 0);
-  });
+      await sub.cancel();
+      expect(fakeBackend.activeListenerCount, 0);
+    },
+  );
 }
