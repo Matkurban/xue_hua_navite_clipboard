@@ -1,6 +1,6 @@
 name: xue_hua_navite_clipboard
 description: "Cross-platform full-featured native clipboard plugin for Flutter (Android, iOS, macOS, Windows, Linux, Web)."
-version: 1.1.0
+version: 1.1.1
 homepage: https://github.com/Matkurban
 repository: https://github.com/Matkurban/xue_hua_navite_clipboard
 topics:
@@ -13,11 +13,13 @@ environment:
   flutter: ">=3.47.0"
 
 dependencies:
+  code_assets: ^2.2.0
   ffi: ^2.2.0
   flutter:
     sdk: flutter
   flutter_web_plugins:
     sdk: flutter
+  hooks: ^2.0.0
   jni: ^1.2.1
   meta: ^1.19.0
   objective_c: ^9.6.4

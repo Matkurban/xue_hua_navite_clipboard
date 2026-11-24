@@ -36,10 +36,7 @@ void main() {
     expect(await plugin.clear(), isTrue);
 
     expect(
-      await plugin.writeHtml(
-        '<b>bold</b>',
-        plainTextFallback: 'bold',
-      ),
+      await plugin.writeHtml('<b>bold</b>', plainTextFallback: 'bold'),
       isTrue,
     );
     final html = await plugin.readHtml();
@@ -119,13 +116,8 @@ void main() {
     expect(custom, isNotNull);
     expect(utf8.decode(custom!), contains('"k":1'));
 
-    final rtf = Uint8List.fromList(
-      utf8.encode(r'{\rtf1\ansi\b RTF bytes\b0}'),
-    );
-    expect(
-      await plugin.writeRtf(rtf, plainTextFallback: 'RTF bytes'),
-      isTrue,
-    );
+    final rtf = Uint8List.fromList(utf8.encode(r'{\rtf1\ansi\b RTF bytes\b0}'));
+    expect(await plugin.writeRtf(rtf, plainTextFallback: 'RTF bytes'), isTrue);
     final rtfBack = await plugin.readRtf();
     final rtfPlain = await plugin.readText();
     expect(
@@ -149,7 +141,10 @@ void main() {
     expect(img, isNotNull);
     expect(img!.first, 0x89);
 
-    expect(XueHuaNaviteClipboard.stripHtmlTags('<p>Hi&nbsp;<b>X</b></p>'), 'Hi X');
+    expect(
+      XueHuaNaviteClipboard.stripHtmlTags('<p>Hi&nbsp;<b>X</b></p>'),
+      'Hi X',
+    );
 
     expect(await plugin.clear(), isTrue);
   });
@@ -164,10 +159,10 @@ void main() {
     final b = File('${tmp.path}/demo_b.txt')..writeAsStringSync('b');
 
     expect(
-      await plugin.writeFiles(
-        <String>[a.path, b.path],
-        mode: FileCopyMode.copy,
-      ),
+      await plugin.writeFiles(<String>[
+        a.path,
+        b.path,
+      ], mode: FileCopyMode.copy),
       isTrue,
     );
     final files = await plugin.readFiles();
@@ -189,12 +184,23 @@ void main() {
         completer.complete(e);
       }
     });
-    expect(await plugin.writeText('stream_probe_${DateTime.now().millisecondsSinceEpoch}'), isTrue);
+    expect(
+      await plugin.writeText(
+        'stream_probe_${DateTime.now().millisecondsSinceEpoch}',
+      ),
+      isTrue,
+    );
     final event = await completer.future.timeout(const Duration(seconds: 10));
     await sub.cancel();
     expect(event.changeCount, greaterThanOrEqualTo(0));
 
-    expect(await plugin.writeSensitiveText('Secret_IT', expiration: const Duration(seconds: 30)), isTrue);
+    expect(
+      await plugin.writeSensitiveText(
+        'Secret_IT',
+        expiration: const Duration(seconds: 30),
+      ),
+      isTrue,
+    );
     final secret = await plugin.readText();
     expect(secret, 'Secret_IT');
 

@@ -66,7 +66,10 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _refreshClipboardInspection() async {
     try {
-      final meta = await _clipboard.getMetadata(buffer: _selectedBuffer, detectPatterns: true);
+      final meta = await _clipboard.getMetadata(
+        buffer: _selectedBuffer,
+        detectPatterns: true,
+      );
       final item = await _clipboard.readItem(
         options: ClipboardReadOptions(
           buffer: _selectedBuffer,
@@ -95,11 +98,18 @@ class _MyAppState extends State<MyApp> {
     final canvas = Canvas(recorder);
     const size = Size(240, 100);
     final paint = Paint()..color = const Color(0xFF1E88E5);
-    canvas.drawRRect(RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(12)), paint);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(12)),
+      paint,
+    );
     final textPainter = TextPainter(
       text: const TextSpan(
         text: 'XueHua PNG Clip',
-        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -234,7 +244,8 @@ class _MyAppState extends State<MyApp> {
                       buffer: _selectedBuffer,
                     );
                     setState(() {
-                      _statusLog = 'Wrote sensitive text (concealed/no-history, expires in 30s)';
+                      _statusLog =
+                          'Wrote sensitive text (concealed/no-history, expires in 30s)';
                     });
                     await _refreshClipboardInspection();
                   },
@@ -293,7 +304,9 @@ class _MyAppState extends State<MyApp> {
                 FilledButton.tonal(
                   key: const Key('btn_write_custom'),
                   onPressed: () async {
-                    final data = Uint8List.fromList(utf8.encode('{"customPayload":42}'));
+                    final data = Uint8List.fromList(
+                      utf8.encode('{"customPayload":42}'),
+                    );
                     await _clipboard.writeCustomData(
                       'application/x-xuehua-custom',
                       data,
@@ -387,7 +400,8 @@ class _MyAppState extends State<MyApp> {
                           key: const Key('preview_uri'),
                           'URI: ${_currentItem!.uri}',
                         ),
-                      if (_currentItem!.files != null && _currentItem!.files!.isNotEmpty)
+                      if (_currentItem!.files != null &&
+                          _currentItem!.files!.isNotEmpty)
                         Text(
                           key: const Key('preview_files'),
                           'Files (${_currentItem!.fileCopyMode.wireName}): ${_currentItem!.files!.join(', ')}',
@@ -406,7 +420,9 @@ class _MyAppState extends State<MyApp> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text('#${_currentItem!.colorValue!.toRadixString(16).toUpperCase()}'),
+                            Text(
+                              '#${_currentItem!.colorValue!.toRadixString(16).toUpperCase()}',
+                            ),
                           ],
                         ),
                       if (_currentItem!.customFormats.isNotEmpty)
@@ -427,7 +443,10 @@ class _MyAppState extends State<MyApp> {
                             final n = _currentItem!.imageBytes!.length;
                             return Text(
                               'Image decode failed ($n bytes): $error',
-                              style: const TextStyle(color: Colors.red, fontSize: 12),
+                              style: const TextStyle(
+                                color: Colors.red,
+                                fontSize: 12,
+                              ),
                             );
                           },
                         ),

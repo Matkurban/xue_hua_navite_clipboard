@@ -16,15 +16,9 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "xue_hua_navite_clipboard_objc_gen",
-            dependencies: [],
-            publicHeadersPath: "."
-        ),
-        .target(
             name: "xue_hua_navite_clipboard",
             dependencies: [
-                .product(name: "FlutterFramework", package: "FlutterFramework"),
-                "xue_hua_navite_clipboard_objc_gen"
+                .product(name: "FlutterFramework", package: "FlutterFramework")
             ],
             resources: [
                 // If your plugin requires a privacy manifest, for example if it uses any required

@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:xue_hua_navite_clipboard_example/main.dart';
 
 void main() {
-  testWidgets('Verify Native Clipboard Example UI renders', (WidgetTester tester) async {
+  testWidgets('Verify Native Clipboard Example UI renders', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const MyApp());
 
     expect(

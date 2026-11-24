@@ -3,6 +3,7 @@
 // ignore_for_file: depend_on_referenced_packages
 
 import 'dart:io';
+
 import 'package:jnigen/jnigen.dart';
 
 void main() async {
@@ -31,14 +32,12 @@ void main() async {
       ),
       backend: SummarizerBackend.asm,
       classPath: [Uri.directory('build/app/tmp/kotlin-classes/release')],
-
     ),
     output: Output(
       dart: DartOutput(
         path: Uri.file('lib/src/pigeon/clipboard_api.g.jni.dart'),
         structure: OutputStructure.singleFile,
       ),
-
     ),
   );
   await generator.generate();

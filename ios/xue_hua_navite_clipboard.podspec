@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'xue_hua_navite_clipboard'
-  s.version          = '1.1.0'
+  s.version          = '1.1.1'
   s.summary          = 'Cross-platform full-featured native clipboard plugin for Flutter.'
   s.description      = <<-DESC
 Cross-platform full-featured native clipboard plugin for Flutter (Android, iOS, macOS, Windows, Linux, Web).
@@ -13,7 +13,7 @@ Cross-platform full-featured native clipboard plugin for Flutter (Android, iOS, 
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Matkurban' => '3496354336@qq.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'xue_hua_navite_clipboard/Sources/**/*.{swift,m,h}'
+  s.source_files = 'xue_hua_navite_clipboard/Sources/xue_hua_navite_clipboard/**/*.swift'
   s.dependency 'Flutter'
   s.platform = :ios, '15.0'
 

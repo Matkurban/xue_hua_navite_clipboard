@@ -1,3 +1,8 @@
+## 1.1.1
+
+* fix(ios, macos): prevent `dlsym: symbol not found` runtime crashes on iOS TestFlight / Xcode Archive (and macOS Archive) where Xcode's default `STRIP_STYLE = all` strips statically linked Objective-C trampoline symbols (`*_objc_gen/*.m`) from `Runner`.
+* feat(ios, macos): bundle generated Objective-C trampolines as a dedicated Dart Native Code Asset (`hook/build.dart` -> `xue_hua_navite_clipboard_objc_gen.dylib`) bound via `@ffi.DefaultAsset`, and remove duplicate static compilation from iOS/macOS `Package.swift` and `.podspec` — zero host-app configuration required.
+
 ## 1.1.0
 
 * refactor: replace `plugin_platform_interface` and manual `MethodChannel`/`EventChannel` plumbing with **Pigeon 30.0.4** across Dart, Android (Kotlin + JNI Native Interop), iOS/macOS (Swift + Objective-C FFI Native Interop), Windows (C++), and Linux (C++/GObject).
